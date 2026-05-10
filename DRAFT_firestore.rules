@@ -1,0 +1,124 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(authorId) {
+      return isSignedIn() && request.auth.uid == authorId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validations ---
+    function isValidSettings(data) {
+      return data.keys().hasAll(['wpUrl', 'wpUsername', 'wpAppPassword']) &&
+             data.wpUrl is string && data.wpUrl.size() < 500 &&
+             data.wpUsername is string && data.wpUsername.size() < 100 &&
+             data.wpAppPassword is string && data.wpAppPassword.size() < 200 &&
+             (!('gscProperty' in data) || (data.gscProperty is string && data.gscProperty.size() < 500)) &&
+             (!('aiModel' in data) || (data.aiModel is string && data.aiModel.size() < 100)) &&
+             (!('theme' in data) || (data.theme in ['light', 'dark'])) &&
+             (!('updatedAt' in data) || data.updatedAt == request.time);
+    }
+
+    function isValidCompetitor(data) {
+      return data.keys().hasAll(['url', 'wordCount', 'imageCount', 'authorId']) &&
+             data.authorId == request.auth.uid &&
+             data.url is string && data.url.size() < 1000 &&
+             data.wordCount is int &&
+             data.imageCount is int &&
+             (!('createdAt' in data) || data.createdAt == request.time);
+    }
+
+    function isValidPost(data) {
+      return data.keys().hasAll(['title', 'status', 'authorId']) &&
+             data.authorId == request.auth.uid &&
+             data.title is string && data.title.size() < 1000 &&
+             data.status in ['draft', 'published', 'scheduled'] &&
+             (!('createdAt' in data) || data.createdAt == request.time) &&
+             (!('updatedAt' in data) || data.updatedAt == request.time);
+    }
+
+    function isValidDraft(data) {
+      // Drafts saved to /drafts/{userId} do not strictly need authorId field in data if ID is userId, 
+      // but App.tsx spreads blogDraft which might NOT have authorId yet.
+      return data.keys().hasAll(['status']) &&
+             data.status in ['draft', 'published', 'scheduled'] &&
+             (!('updatedAt' in data) || data.updatedAt == request.time);
+    }
+
+    function isValidSearch(data) {
+      return data.keys().hasAll(['query', 'authorId']) &&
+             data.authorId == request.auth.uid &&
+             data.query is string && data.query.size() < 1000 &&
+             (!('createdAt' in data) || data.createdAt == request.time);
+    }
+
+    // --- Collection Routes ---
+
+    // Settings
+    match /settings/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+      allow create, update: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidSettings(incoming());
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+    }
+
+    // Drafts
+    match /drafts/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+      allow create, update: if isSignedIn() && request.auth.uid == userId && isValidId(userId) && isValidDraft(incoming());
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+    }
+
+    // Competitors
+    match /competitors/{competitorId} {
+      allow list: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.authorId == request.auth.uid && isValidId(competitorId);
+      allow create: if isSignedIn() && isValidCompetitor(incoming());
+      allow update: if isSignedIn() && isOwner(existing().authorId) && isValidId(competitorId) && isValidCompetitor(incoming()) && incoming().authorId == existing().authorId;
+      allow delete: if isSignedIn() && isOwner(existing().authorId) && isValidId(competitorId);
+    }
+
+    // Posts
+    match /posts/{postId} {
+      allow list: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.authorId == request.auth.uid && isValidId(postId);
+      allow create: if isSignedIn() && isValidPost(incoming());
+      allow update: if isSignedIn() && isOwner(existing().authorId) && isValidId(postId) && isValidPost(incoming()) && incoming().authorId == existing().authorId;
+      allow delete: if isSignedIn() && isOwner(existing().authorId) && isValidId(postId);
+    }
+
+    // Searches
+    match /searches/{searchId} {
+      allow list: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.authorId == request.auth.uid && isValidId(searchId);
+      allow create: if isSignedIn() && isValidSearch(incoming());
+      allow delete: if isSignedIn() && isOwner(existing().authorId) && isValidId(searchId);
+    }
+
+    // Draft Images
+    match /draft_images/{imageId} {
+      allow get: if isSignedIn() && imageId.startsWith(request.auth.uid) && isValidId(imageId);
+      allow create, update: if isSignedIn() && imageId.startsWith(request.auth.uid) && isValidId(imageId);
+      allow delete: if isSignedIn() && imageId.startsWith(request.auth.uid) && isValidId(imageId);
+    }
+  }
+}

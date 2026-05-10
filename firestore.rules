@@ -1,0 +1,149 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Test Connection (Critical for boot diagnostics)
+    match /test/{allPaths=**} {
+      allow read: if true;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(authorId) {
+      return isSignedIn() && request.auth.uid == authorId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validations ---
+    function isValidSettings(data) {
+      // Basic requirements for settings
+      return data.keys().hasAll(['wpUrl', 'wpUsername', 'wpAppPassword']) &&
+             data.wpUrl is string &&
+             data.wpUsername is string &&
+             data.wpAppPassword is string;
+    }
+
+    function isValidCompetitor(data) {
+      return data.keys().hasAll(['url', 'wordCount', 'imageCount', 'authorId']) &&
+             data.authorId == request.auth.uid &&
+             data.url is string && data.url.size() < 1000 &&
+             data.wordCount is int &&
+             data.imageCount is int &&
+             (!('title' in data) || (data.title is string && data.title.size() < 500)) &&
+             (!('description' in data) || (data.description is string && data.description.size() < 2000)) &&
+             (!('createdAt' in data) || data.createdAt == request.time);
+    }
+
+    function isValidPost(data) {
+      return data.keys().hasAll(['title', 'status', 'authorId']) &&
+             data.authorId == request.auth.uid &&
+             data.title is string && data.title.size() < 1000 &&
+             data.status in ['draft', 'published', 'scheduled'] &&
+             (!('createdAt' in data) || data.createdAt == request.time) &&
+             (!('updatedAt' in data) || data.updatedAt == request.time);
+    }
+
+    function isValidDraft(data) {
+      // Relaxed draft validation for autosave
+      return true;
+    }
+
+    function isValidSearch(data) {
+      return data.keys().hasAll(['query', 'authorId']) &&
+             data.authorId == request.auth.uid &&
+             data.query is string && data.query.size() < 1000 &&
+             (!('createdAt' in data) || data.createdAt == request.time);
+    }
+
+    function isValidBlueprint(data) {
+      return data.keys().hasAll(['userId', 'name', 'sopModels', 'prompts']) &&
+             data.userId == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.sopModels is map &&
+             data.prompts is map &&
+             (!('targetWordCount' in data) || data.targetWordCount is int) &&
+             (!('createdAt' in data) || data.createdAt == request.time);
+    }
+
+    // --- Collection Routes ---
+
+    // Draft Images (Fragmented for size limit management)
+    match /draft_images/{imageId} {
+      allow get: if isSignedIn();
+      allow write, delete: if isSignedIn() && imageId.matches("^" + request.auth.uid + ".*");
+    }
+
+    // Post Images ( Fragmented for size limit management)
+    match /post_images/{imageId} {
+      allow get, write, delete: if isSignedIn();
+    }
+
+    // Settings
+    match /settings/{uId} {
+      allow read, write: if isSignedIn() && request.auth.uid == uId;
+    }
+
+    // Drafts (User's autosave)
+    match /drafts/{uId} {
+      allow read, write: if isSignedIn() && request.auth.uid == uId;
+    }
+
+    // Competitors
+    match /competitors/{competitorId} {
+      allow get: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      allow list: if isSignedIn(); // Restricted by query filter
+      allow create: if isSignedIn() && isValidCompetitor(incoming());
+      allow update: if isSignedIn() && resource.data.authorId == request.auth.uid && isValidCompetitor(incoming());
+      allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+    }
+
+    // Posts
+    match /posts/{postId} {
+      allow get: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      allow list: if isSignedIn(); // Restricted by query filter
+      allow create: if isSignedIn() && isValidPost(incoming());
+      allow update: if isSignedIn() && resource.data.authorId == request.auth.uid && isValidPost(incoming());
+      allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+    }
+
+    // Blueprints
+    match /blueprints/{blueprintId} {
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow list: if isSignedIn(); // Restricted by query filter
+      allow create: if isSignedIn() && isValidBlueprint(incoming());
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && isValidBlueprint(incoming());
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // Searches
+    match /searches/{searchId} {
+      allow get: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      allow list: if isSignedIn(); // Restricted by query filter
+      allow create: if isSignedIn() && isValidSearch(incoming());
+      allow update: if isSignedIn() && resource.data.authorId == request.auth.uid && isValidSearch(incoming());
+      allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+    }
+  }
+}
