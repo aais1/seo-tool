@@ -106,7 +106,7 @@ function formatAIError(error: any) {
   let detail = "The neural engine encountered an unexpected interruption.";
   let solution = "Please check your network connection and try again.";
 
-  const errorMessage = error?.message || String(error);
+  const errorMessage = error?.message || String(error) || '';
   
   if (errorMessage.includes("403") || errorMessage.toLowerCase().includes("permission denied")) {
     message = "Authorization Rejected";
@@ -261,20 +261,10 @@ const normalizeBlogPost = (post: any, id?: string): BlogPost => {
 };
 
 const getGeminiModelName = (model: string) => {
-  const baseModel = (() => {
-    const m = model.toLowerCase();
-    
-    if (m.includes('2.0-flash')) return 'gemini-2.0-flash-exp';
-    if (m.includes('1.5-pro')) return 'gemini-1.5-pro';
-    if (m.includes('1.5-flash')) return 'gemini-1.5-flash';
-    if (m.includes('pro')) return 'gemini-1.5-pro';
-    if (m.includes('flash')) return 'gemini-1.5-flash';
-    if (m.includes('gemini')) return 'gemini-1.5-flash';
-    
-    return model.replace('models/', '');
-  })();
-  
-  return baseModel.startsWith('models/') ? baseModel : `models/${baseModel}`;
+  const m = (model || '').toLowerCase();
+  if (m.includes('3.1-flash-lite')) return 'models/gemini-3.1-flash-lite';
+  // Default/fallback to the requested standard model
+  return 'models/gemini-2.5-flash';
 };
 
 interface AppSettings {
@@ -330,7 +320,7 @@ const injectImages = (html: string, images: BlogPost['contentImages'] = [], plac
   if (!html) return '';
   
   // Strip existing injected images first to ensure clean re-injection
-  const cleanHtml = html.replace(/\n?<figure class="wp-block-image[^>]*>.*?<\/figure>\n?/gs, '');
+  const cleanHtml = html.replace(/\n?<figure class="wp-block-image[^>]*>.*?<\/figure>\n?/gs, '').trim();
   
   if (!images || images.length === 0) return cleanHtml;
   
@@ -537,20 +527,20 @@ export default function App() {
     imagePlacement: 'after-h2',
     lsiKeywords: true,
     targetWordCount: 1200,
-    aiModel: "gemini-1.5-flash-latest",
+  aiModel: "models/gemini-2.5-flash",
     theme: 'dark',
     aspectRatio: '16:9',
     openaiKey: '',
     anthropicKey: '',
     geminiKey: '',
     sopModels: {
-      title: 'gemini-1.5-flash',
-      introduction: 'gemini-1.5-flash',
-      content: 'gemini-1.5-flash',
-      faq: 'gemini-1.5-flash',
-      metaDescription: 'gemini-1.5-flash',
-      conclusion: 'gemini-1.5-flash',
-      lsi: 'gemini-1.5-flash'
+  title: 'models/gemini-2.5-flash',
+  introduction: 'models/gemini-2.5-flash',
+  content: 'models/gemini-2.5-flash',
+  faq: 'models/gemini-2.5-flash',
+  metaDescription: 'models/gemini-2.5-flash',
+  conclusion: 'models/gemini-2.5-flash',
+  lsi: 'models/gemini-2.5-flash'
     },
     prompts: {
       title: 'Act as a master copywriter. Generate a high-CTR, high-impact title that leads with the transformation or benefit the reader will achieve. Integrate the focus keyword "${focus_keyword}" naturally and ensure the final output is strictly under 60 characters.',
@@ -836,39 +826,42 @@ export default function App() {
       
       // Load Settings
       try {
-        const settingsDoc = await getDoc(doc(db, 'settings', uid));
+        const settingsDoc = await getDoc(doc(db, 'settings', uid)).catch(err => {
+          handleFirestoreError(err, OperationType.GET, `settings/${uid}`);
+          return null;
+        });
         if (settingsDoc.exists()) {
           const data = settingsDoc.data() as AppSettings;
           // Migration for legacy or invalid model names
           const validModels = [
-            'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp',
+            'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-lite',
             'gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo',
             'claude-3-5-sonnet-latest', 'claude-3-opus-latest', 'claude-3-haiku-latest'
           ];
           if (!data.aiModel || !validModels.includes(data.aiModel)) {
-            data.aiModel = 'gemini-1.5-flash';
+            data.aiModel = 'gemini-2.0-flash-lite';
           }
           if (!data.sopModels) {
             data.sopModels = {
-              title: 'gemini-1.5-flash',
-              introduction: 'gemini-1.5-flash',
-              content: 'gemini-1.5-flash',
-              faq: 'gemini-1.5-flash',
-              metaDescription: 'gemini-1.5-flash',
-              conclusion: 'gemini-1.5-flash',
-              lsi: 'gemini-1.5-flash'
+              title: 'gemini-2.0-flash-lite',
+              introduction: 'gemini-2.0-flash-lite',
+              content: 'gemini-2.0-flash-lite',
+              faq: 'gemini-2.0-flash-lite',
+              metaDescription: 'gemini-2.0-flash-lite',
+              conclusion: 'gemini-2.0-flash-lite',
+              lsi: 'gemini-2.0-flash-lite'
             };
           } else {
             // Ensure individual models are also migrated if they were invalid or deprecated versions
             Object.keys(data.sopModels).forEach(k => {
               const key = k as keyof AppSettings['sopModels'];
               if (!validModels.includes(data.sopModels![key])) {
-                data.sopModels![key] = 'gemini-1.5-flash';
+                data.sopModels![key] = 'gemini-2.0-flash-lite';
               }
             });
           }
           if (data.sopModels && !data.sopModels.metaDescription) {
-            data.sopModels.metaDescription = 'gemini-1.5-flash';
+            data.sopModels.metaDescription = 'gemini-2.0-flash-lite';
           }
           if (data.prompts && !data.prompts.metaDescription) {
             data.prompts.metaDescription = 'Act as an expert SEO analyst. Generate a compelling meta description between 150-160 characters. Lead with a primary benefit, integrate the focus keyword naturally, and conclude with a high-conversion call-to-action that creates urgency or curiosity.';
@@ -968,7 +961,7 @@ export default function App() {
     if (!user) return;
     try {
       // 1. Fragment images
-      const { featuredImage, contentImages, ...metadata } = post;
+  const { featuredImage, contentImages, ...metadata } = post || {};
       
       let postId = post.id;
       
@@ -1106,10 +1099,11 @@ export default function App() {
       const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
 
 const modelsToTry = [
-  'gemini-2.0-flash',
-  'gemini-2.0-flash-lite',
-  'gemini-1.5-flash-latest'
-];      let response = null;
+  'models/gemini-2.0-flash-lite',
+  'models/gemini-2.0-flash',
+  'models/gemini-1.5-flash-latest'
+];
+      let response = null;
       let lastError = null;
 
       for (const modelId of modelsToTry) {
@@ -1224,7 +1218,7 @@ OUTPUT RULE:
       const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
       
       const response = await ai.models.generateContent({
-        model: 'gemini-1.5-flash',
+  model: 'models/gemini-2.5-flash',
         contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${gradeInstruction}\n${toneInstruction}\n${sopInstruction}\n${contextInstruction}\n\nCONTENT:\n${cleanedContent}` }] }],
         config: {
           temperature: 0.1,
@@ -1233,11 +1227,13 @@ OUTPUT RULE:
       });
       
       const refinedContent = response.text || '';
-      
+
       if (refinedContent) {
         setBlogDraft({
           ...blogDraft,
-          content: refinedContent
+          // Preserve raw HTML returned by the model and present a readable plain-text version in the editor
+          rawContent: refinedContent,
+          content: htmlToPlainText(refinedContent)
         });
         showNotification(`Humanized refinement complete (${proofreadGrade})`, "success");
       }
@@ -1274,7 +1270,7 @@ OUTPUT RULE:
       const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
       
       const response = await ai.models.generateContent({
-        model: 'gemini-1.5-flash',
+  model: 'models/gemini-2.5-flash',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
       });
       
@@ -1374,6 +1370,21 @@ OUTPUT RULE:
     });
   };
 
+    // Convert HTML to readable plain text for editor display while preserving raw HTML
+    const htmlToPlainText = (html?: string | null) => {
+      if (!html) return '';
+      try {
+        // Use DOMParser in the browser to preserve text structure
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const text = doc.body.textContent || '';
+        return text.replace(/\s+/g, ' ').trim();
+      } catch (e) {
+        // Fallback: strip tags crudely
+        return (html || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+      }
+    };
+
   const generateIndividualImage = async (prompt: string, type: 'featured' | 'content', index?: number, aspectRatio: string = '16:9') => {
     const apiKey = settings.geminiKey || (process.env.GEMINI_API_KEY as string);
     if (!apiKey) {
@@ -1385,55 +1396,72 @@ OUTPUT RULE:
       showNotification(`Generating visual asset (${aspectRatio})...`, 'success');
       
       let imageUrl = '';
-      
-      // Try series of models to find one available for the user
-      const modelsToTry = [
-        { id: 'models/gemini-2.0-flash-exp', type: 'gemini' },
-        { id: 'models/gemini-1.5-flash', type: 'gemini' },
-        { id: 'models/imagen-3.0-generate-001', type: 'imagen' },
-        { id: 'models/imagen-3.0-flash-generate-001', type: 'imagen' }
-      ];
 
-      for (const modelConfig of modelsToTry) {
-        try {
-          if (modelConfig.type === 'gemini') {
-            const result = await ai.models.generateContent({
-              model: modelConfig.id,
-              contents: [{ role: 'user', parts: [{ text: prompt }] }],
-              config: {
-                imageConfig: {
-                  aspectRatio: (aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : aspectRatio === '4:3' ? '4:3' : aspectRatio === '3:4' ? '3:4' : '1:1') as any
-                }
-              }
-            });
-            const candidate = result.candidates?.[0];
-            if (candidate?.content?.parts) {
-              for (const part of candidate.content.parts) {
-                if (part.inlineData) {
-                  imageUrl = `data:image/png;base64,${part.inlineData.data}`;
-                  break;
-                }
-              }
+      // Determine image models to try. Prefer an explicit setting if present.
+      // If none are configured, we skip calling the API and use a visual placeholder instead.
+      const configuredModels: string[] | undefined = (settings as any).imageModels;
+      const recommendedModels: string[] = Array.isArray(configuredModels) && configuredModels.length > 0
+        ? configuredModels
+        : [];
+
+      if (recommendedModels.length === 0) {
+        // No image-generation models configured: fall back to a placeholder to avoid noisy API errors.
+        const fallbackUrl = `https://picsum.photos/seed/${encodeURIComponent(prompt)}/1200/630`;
+        if (type === 'featured') {
+          setBlogDraft(prev => prev ? ({
+            ...prev,
+            featuredImage: {
+              ...(prev.featuredImage || { alt: prev.title || 'Featured Image', title: prev.title || '', prompt: prompt, filename: '' }),
+              url: fallbackUrl,
+              prompt: prompt
             }
-          } else if (modelConfig.type === 'imagen') {
-            const imagenResponse = await ai.models.generateImages({
-              model: modelConfig.id,
-              prompt: prompt,
-              config: {
-                numberOfImages: 1,
-                aspectRatio: (aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : aspectRatio === '4:3' ? '4:3' : aspectRatio === '3:4' ? '3:4' : '1:1') as any
-              }
-            });
-            imageUrl = `data:image/png;base64,${imagenResponse.generatedImages?.[0]?.image?.imageBytes}`;
-          }
+          }) : null);
+        } else if (index !== undefined) {
+          setBlogDraft(prev => {
+            if (!prev) return null;
+            const newContentImages = [...(prev.contentImages || [])];
+            newContentImages[index] = {
+              ...(newContentImages[index] || { alt: `Section ${index + 1}`, prompt: prompt, filename: '' }),
+              url: fallbackUrl,
+              prompt: prompt
+            };
+            const updatedContent = injectImages(prev.content, newContentImages, settings.imagePlacement);
+            return { ...prev, contentImages: newContentImages, content: updatedContent };
+          });
+        }
+        showNotification('Image generation skipped — no image model configured or available. Using a placeholder.', 'warning');
+        return;
+      }
 
-          if (imageUrl && !imageUrl.includes('undefined')) break;
+      const errors: any[] = [];
+      // Try configured/recommended models but use the image-specific API method (generateImages)
+      for (const modelId of recommendedModels) {
+        try {
+          const imgResp = await ai.models.generateImages({
+            model: modelId,
+            prompt,
+            config: {
+              numberOfImages: 1,
+              aspectRatio: (aspectRatio === '16:9' ? '16:9' : aspectRatio === '9:16' ? '9:16' : aspectRatio === '4:3' ? '4:3' : aspectRatio === '3:4' ? '3:4' : '1:1') as any
+            }
+          });
+          const b64 = imgResp.generatedImages?.[0]?.image?.imageBytes;
+          if (b64) {
+            imageUrl = `data:image/png;base64,${b64}`;
+            break;
+          }
         } catch (mErr: any) {
-          console.warn(`Model ${modelConfig.id} selection failed, attempting next...`, mErr);
+          errors.push({ model: modelId, err: mErr });
+          // If the error is a clear model-not-found (404), keep trying other configured models but don't spam console.
         }
       }
 
-      if (!imageUrl || imageUrl.includes('undefined')) throw new Error("No image data returned from any model. Your API key might not have Image Generation permissions or quota limit reached.");
+      if (!imageUrl) {
+        // Aggregate first error message for user feedback
+        const first = errors[0];
+        const errMsg = first ? (first.err?.message || JSON.stringify(first.err)) : 'No error details available';
+        throw new Error(`No image data returned from any configured model. ${errMsg}`);
+      }
 
       // Compress image to avoid Firestore 1MB limit
       const compressedUrl = await compressImage(imageUrl, 1024, 0.6);
@@ -1498,6 +1526,45 @@ OUTPUT RULE:
         showNotification(message, 'error', finalDetail);
       }
     }
+  };
+
+  // Normalize a heading text which may sometimes be raw HTML or a JSON payload string
+  const sanitizeHeadingText = (raw?: string | null) => {
+    if (!raw) return '';
+    const trimmed = raw.trim();
+    // If it looks like JSON, try to parse and extract a sensible field
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object') {
+          // Prefer title, then meta_title, then meta_description, then featured_image_prompt
+          return String(parsed.title || parsed.meta_title || parsed.meta_description || parsed.featured_image_prompt || Object.values(parsed)[0] || '').trim();
+        }
+      } catch (e) {
+        // fall through to HTML stripping
+      }
+    }
+
+    // If it's HTML, strip tags and return text
+    const plain = htmlToPlainText(trimmed);
+    if (plain && plain.length > 0) return plain;
+
+    // Fallback: return the original trimmed string
+    return trimmed;
+  };
+
+  // Prettify and truncate heading text for compact UI display
+  const prettifyHeadingText = (raw?: string | null, maxLen = 80) => {
+    const cleaned = sanitizeHeadingText(raw);
+    if (!cleaned) return '';
+    // Remove excessive prompt-like fragments and newlines
+    let s = cleaned.replace(/\s+/g, ' ').trim();
+    // Remove surrounding quotes or braces left-over
+    s = s.replace(/^['"`\s]+|['"`\s]+$/g, '');
+    if (s.length <= maxLen) return s;
+    // Truncate at word boundary
+    const truncated = s.slice(0, maxLen); const lastSpace = truncated.lastIndexOf(' ');
+    return (lastSpace > Math.floor(maxLen * 0.6) ? truncated.slice(0, lastSpace) : truncated).trim() + '…';
   };
 
   const [uploadConfig, setUploadConfig] = useState<{ type: 'featured' | 'content', index?: number } | null>(null);
@@ -1689,7 +1756,7 @@ OUTPUT RULE:
     try {
       showNotification("Engineering visual prompt for section...", 'success');
       const response = await ai.models.generateContent({
-        model: 'gemini-1.5-flash',
+        model: 'models/gemini-2.5-flash',
         contents: `Create a professional, cinematic visual prompt for an AI image generator (like Midjourney or DALL-E) based on this content section.
       CONTEXT: ${context}
       SECTION CONTENT: ${sectionText.substring(0, 2000)}
@@ -1716,7 +1783,7 @@ OUTPUT RULE:
     try {
       showNotification("Engineering visual prompt from content...", 'success');
       const response = await ai.models.generateContent({
-        model: 'gemini-1.5-flash',
+        model: 'models/gemini-2.0-flash-lite',
         contents: `Analyze the mood, industry, and core message of this blog content. Then, create a professional, high-converting cinematic visual prompt for an AI image generator (like Midjourney or DALL-E) to create a featured image.
       TITLE: ${blogDraft.title}
       INTRODUCTION: ${blogDraft.introduction.substring(0, 1000)}
@@ -1933,67 +2000,51 @@ OUTPUT RULE:
   };
 
   const callAIModel = async (modelId: string, prompt: string, systemPrompt?: string, signal?: AbortSignal, responseSchema?: any) => {
-    let finalModelName = getGeminiModelName(modelId);
-    let attempts = 0;
-    
-    while (attempts < 2) {
-      try {
-        if (modelId.includes('gemini')) {
-          const apiKey = settings.geminiKey || (process.env.GEMINI_API_KEY as string);
-          if (!apiKey) throw new Error("Gemini Key Missing: Please provide an API key in Settings.");
-          const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
-          
-          const response = await ai.models.generateContent({
-            model: finalModelName,
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            config: {
-              systemInstruction: systemPrompt || undefined,
-              temperature: 0.7,
-              responseMimeType: responseSchema ? "application/json" : undefined,
-              responseSchema: responseSchema || undefined
-            }
-          });
-          
-          return response.text || '';
-        } else {
-          const res = await fetch('/api/ai/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model: modelId,
-              prompt: systemPrompt ? `SYSTEM: ${systemPrompt}\n\nUSER: ${prompt}` : prompt,
-              openaiKey: settings.openaiKey,
-              anthropicKey: settings.anthropicKey
-            }),
-            signal
-          });
-          if (!res.ok) {
-            const errorData = await res.json().catch(() => ({}));
-            throw new Error(errorData.details || errorData.error || `HTTP ${res.status}`);
-          }
-          const data = await res.json();
-          return typeof data === 'string' ? data : (data.content || JSON.stringify(data));
-        }
-      } catch (err: any) {
-        const errorMsg = err.message?.toLowerCase() || "";
-        const isPermissionError = errorMsg.includes("403") || errorMsg.includes("permission");
-        const isNotFoundError = errorMsg.includes("404") || errorMsg.includes("not found");
-        const isQuotaError = errorMsg.includes("429") || errorMsg.includes("quota");
-        const isModelError = errorMsg.includes("model") && (errorMsg.includes("not") || errorMsg.includes("access"));
-        
-        if (attempts === 0 && (isPermissionError || isNotFoundError || isQuotaError || isModelError) && (finalModelName.includes('gemini') || finalModelName.includes('pro'))) {
-          console.warn(`Model ${finalModelName} failed (${errorMsg}), Attempting fallback to models/gemini-1.5-flash`);
-          finalModelName = 'models/gemini-1.5-flash';
-          attempts++;
-          continue;
-        }
+    // If this is a Gemini-style model, try a prioritized list of Gemini candidates
+    if (modelId.toLowerCase().includes('gemini')) {
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || settings.geminiKey || (process.env.GEMINI_API_KEY as string);
+      if (!apiKey) throw new Error("Gemini Key Missing: Please provide an API key in Settings or VITE_GEMINI_API_KEY.");
+      const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
 
-        console.error("Agent Call Failure:", err);
+      try {
+        const modelToUse = 'models/gemini-2.5-flash';
+        console.info(`Using Gemini model: ${modelToUse}`);
+        const response = await ai.models.generateContent({
+          model: modelToUse,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: {
+            systemInstruction: systemPrompt || undefined,
+            temperature: 0.7,
+            responseMimeType: responseSchema ? "application/json" : undefined,
+            responseSchema: responseSchema || undefined
+          }
+        });
+
+        return response?.text || '';
+      } catch (err: any) {
         const { message, detail, solution } = formatAIError(err);
         throw new Error(`${message}: ${detail} ${solution}`);
       }
     }
-    throw new Error("AI Generation Engine Failure: All model attempts failed.");
+
+    // Non-Gemini models use the server proxy
+    const res = await fetch('/api/ai/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: modelId,
+        prompt: systemPrompt ? `SYSTEM: ${systemPrompt}\n\nUSER: ${prompt}` : prompt,
+        openaiKey: settings.openaiKey,
+        anthropicKey: settings.anthropicKey
+      }),
+      signal
+    });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.details || errorData.error || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return typeof data === 'string' ? data : (data.content || JSON.stringify(data));
   };
 
   const handleGenerate = async (researchData?: CompetitorData[]) => {
@@ -2305,10 +2356,14 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
 
       const assembledBlogPost: BlogPost = {
         title: result.title || 'Untitled Draft',
-        introduction: result.introduction || '',
-        content: finalContent,
+        // preserve raw HTML and create plain-text editor-friendly fields
+        rawIntroduction: result.introduction || '',
+        introduction: htmlToPlainText(result.introduction),
+        rawContent: finalContent,
+        content: htmlToPlainText(finalContent),
         faq: result.faq || [],
-        conclusion: result.conclusion || '',
+        rawConclusion: result.conclusion || '',
+        conclusion: htmlToPlainText(result.conclusion || ''),
         meta_title: result.meta_title,
         meta_description: result.meta_description,
         targetLsiKeywords: lsiPool,
@@ -5624,6 +5679,38 @@ function VisualGallery({ featuredImage, contentImages, theme, aspectRatio, onAsp
 }
 
 function PreviewModal({ blogDraft, onClose, theme }: { blogDraft: BlogPost, onClose: () => void, theme: 'light' | 'dark' }) {
+  const escapeHtml = (s?: string) => {
+    if (!s) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  };
+
+  const buildPreviewDoc = (d: BlogPost) => {
+    const title = escapeHtml(d.title || '');
+    const meta = escapeHtml(d.meta_description || d.meta_title || '');
+    const intro = (d as any).rawIntroduction || d.introduction || '';
+    const content = (d as any).rawContent || d.content || '';
+    const conclusion = (d as any).rawConclusion || d.conclusion || '';
+    const featured = d.featuredImage?.url ? (`<figure><img src="${escapeHtml(d.featuredImage!.url!)}" alt="${escapeHtml(d.featuredImage!.alt || '')}" style="width:100%;height:auto;border-radius:12px;object-fit:cover;margin-bottom:20px;"/></figure>`) : '';
+
+    // Minimal inline styling to approximate site render (prose-like)
+    const style = `
+      body{font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:${theme === 'dark' ? '#0f172a' : '#ffffff'}; color:${theme === 'dark' ? '#e6edf3' : '#0f172a'}; padding:40px;}
+      .container{max-width:900px;margin:0 auto}
+      .prose{line-height:1.8;font-size:18px}
+      h1{font-size:40px;margin:0 0 20px}
+      h2{font-size:28px;margin:28px 0 12px}
+      p{margin:12px 0}
+      img{max-width:100%}
+      figure{margin:0}
+    `;
+
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><meta name="description" content="${meta}"><meta name="viewport" content="width=device-width,initial-scale=1"/><style>${style}</style></head><body><div class="container"><article class="prose">${featured}${intro}${content}${conclusion}</article></div></body></html>`;
+  };
   return (
     <motion.div 
       initial={{ opacity: 0 }}
@@ -5703,12 +5790,12 @@ function PreviewModal({ blogDraft, onClose, theme }: { blogDraft: BlogPost, onCl
             <div className="space-y-12">
               <div 
                 className="text-xl font-bold border-l-8 border-indigo-600 pl-8 py-4 opacity-90 leading-relaxed"
-                dangerouslySetInnerHTML={{ __html: blogDraft.introduction }} 
+                dangerouslySetInnerHTML={{ __html: (blogDraft as any).rawIntroduction || blogDraft.introduction }} 
               />
               
               <div 
                 className="blog-content prose-lg"
-                dangerouslySetInnerHTML={{ __html: blogDraft.content }} 
+                dangerouslySetInnerHTML={{ __html: (blogDraft as any).rawContent || blogDraft.content }} 
               />
 
               {blogDraft.faq && blogDraft.faq.length > 0 && (
@@ -5733,7 +5820,7 @@ function PreviewModal({ blogDraft, onClose, theme }: { blogDraft: BlogPost, onCl
                   "p-10 border-4 border-dashed rounded-2xl",
                   theme === 'dark' ? "bg-slate-900/50 border-slate-800" : "bg-slate-50 border-slate-200"
                 )}
-                dangerouslySetInnerHTML={{ __html: blogDraft.conclusion }} 
+                dangerouslySetInnerHTML={{ __html: (blogDraft as any).rawConclusion || blogDraft.conclusion }} 
               />
             </div>
           </article>
@@ -5747,7 +5834,7 @@ function PreviewModal({ blogDraft, onClose, theme }: { blogDraft: BlogPost, onCl
             <div className="flex flex-col">
               <span className="text-[8px] font-black uppercase tracking-[0.2em] text-slate-500 mb-1">Total Words</span>
               <span className="text-sm font-black text-indigo-500 font-mono">
-                {Math.round(((blogDraft.introduction || '') + (blogDraft.content || '') + (blogDraft.conclusion || '')).replace(/<[^>]*>/g, ' ').trim().split(/\s+/).length)}
+                {Math.round((((blogDraft as any).rawIntroduction || blogDraft.introduction || '') + ((blogDraft as any).rawContent || blogDraft.content || '') + ((blogDraft as any).rawConclusion || blogDraft.conclusion || '')).replace(/<[^>]*>/g, ' ').trim().split(/\s+/).length)}
               </span>
             </div>
             <div className="flex flex-col">
