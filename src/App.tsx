@@ -1398,11 +1398,10 @@ OUTPUT RULE:
       let imageUrl = '';
 
       // Determine image models to try. Prefer an explicit setting if present.
-      // If none are configured, we skip calling the API and use a visual placeholder instead.
       const configuredModels: string[] | undefined = (settings as any).imageModels;
       const recommendedModels: string[] = Array.isArray(configuredModels) && configuredModels.length > 0
         ? configuredModels
-        : [];
+        : ['imagen-4.0-fast-generate-001', 'imagen-3.0-generate-001'];
 
       if (recommendedModels.length === 0) {
         // No image-generation models configured: fall back to a placeholder to avoid noisy API errors.
@@ -1532,12 +1531,24 @@ OUTPUT RULE:
   const sanitizeHeadingText = (raw?: string | null) => {
     if (!raw) return '';
     const trimmed = raw.trim();
+    
+    // If we have markdown JSON block, strip the markdown
+    let jsonStr = trimmed;
+    if (jsonStr.startsWith('```json')) {
+      jsonStr = jsonStr.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    } else if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.replace(/^```\s*/, '').replace(/\s*```$/, '');
+    }
+
     // If it looks like JSON, try to parse and extract a sensible field
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    if (jsonStr.startsWith('{') || jsonStr.startsWith('[')) {
       try {
-        const parsed = JSON.parse(trimmed);
+        const parsed = JSON.parse(jsonStr);
         if (parsed && typeof parsed === 'object') {
-          // Prefer title, then meta_title, then meta_description, then featured_image_prompt
+          // In case the object is the specific complex AI payload you described, extract its explicit heading
+          if (parsed.heading) return String(parsed.heading).trim();
+          
+          // Otherwise try the other known properties
           return String(parsed.title || parsed.meta_title || parsed.meta_description || parsed.featured_image_prompt || Object.values(parsed)[0] || '').trim();
         }
       } catch (e) {
@@ -2140,8 +2151,38 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
           
           try {
             // Try to extract JSON if the model returns it or just clean text
-            if (res.trim().startsWith('{') || res.trim().startsWith('[')) {
-              const parsed = JSON.parse(res.trim());
+            let textToParse = res.trim();
+            if (textToParse.startsWith('```json')) {
+              textToParse = textToParse.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+            } else if (textToParse.startsWith('```')) {
+              textToParse = textToParse.replace(/^```\s*/, '').replace(/\s*```$/, '');
+            }
+
+            if (textToParse.startsWith('{') || textToParse.startsWith('[')) {
+              let parsed;
+              try {
+                parsed = JSON.parse(textToParse);
+              } catch (parseErr) {
+                // Attempt regex fallback for common fields
+                const extracted: any = {};
+                const contentMatch = textToParse.match(new RegExp('"content"\\s*:\\s*"([\\s\\S]*?)"\\s*(,|\\})', ''));
+                if (contentMatch) extracted.content = contentMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+                
+                const conclusionMatch = textToParse.match(new RegExp('"conclusion"\\s*:\\s*"([\\s\\S]*?)"\\s*(,|\\})', ''));
+                if (conclusionMatch) extracted.conclusion = conclusionMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+
+                const introMatch = textToParse.match(new RegExp('"introduction"\\s*:\\s*"([\\s\\S]*?)"\\s*(,|\\})', ''));
+                if (introMatch) extracted.introduction = introMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+
+                if (Object.keys(extracted).length > 0) {
+                  console.log(`[AI Parser] Gracefully recovered JSON for ${stepName} using fallback extraction.`);
+                  parsed = extracted;
+                } else {
+                  console.warn(`Failed to parse and recover JSON for ${stepName}. Returning raw text.`);
+                  return textToParse; // Return stripped string at least
+                }
+              }
+
               // Scrub any literal "focus keyword" or "{focus_keyword}" from the parsed response
               const scrub = (obj: any): any => {
                 if (typeof obj === 'string') {
@@ -2262,16 +2303,19 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
         INTRO PREVIEW: ${result.introduction.substring(0, 300)}...
         
         GOAL: Generate the full body content in HTML format. 
-        REFERENCE RULE: Use the Competitor Data provided in the context to inform every section. The content must be as factual and detailed as the competitors, but uniquely written.
         
-        STRUCTURE RULE: You MUST strictly use the following headings from the Master Blueprint (extracted from competitors): ${strategyData?.outline?.join(' | ') || 'Follow competitor heading patterns'}. 
+        CRITICAL STRUCTURE RULE (DO NOT IGNORE): 
+        You MUST use EXACTLY the following headings from the Master Blueprint. Do not alter them, rephrase them, omit them, or invent new ones. Keep the headings exactly identical:
+        ${strategyData?.outline?.join('\n        ') || 'Follow competitor heading patterns'}
         
-        STRATEGIC DIRECTIVES (EXECUTE SILENTLY):
-        1. CONTENT FLOW: ${processSOP(settings.prompts.content)}
-        2. SEMANTIC LAYER: ${settings.lsiKeywords ? processSOP(settings.prompts.lsi) : `Use these terms: ${lsiTerms}.`}
+        CRITICAL SOP DIRECTIVES (STRICTLY ENFORCED):
+        You MUST write the paragraphs beneath each heading strictly following these rules:
+        1. CONTENT FLOW SOP: ${processSOP(settings.prompts.content)}
+        2. SEMANTIC LAYER SOP: ${settings.lsiKeywords ? processSOP(settings.prompts.lsi) : `Use these terms: ${lsiTerms}.`}
         
         MANDATORY CONSTRAINTS:
-        - NEVER mention the word "Directive", "Rule", or "Competitor" in the article text.
+        - Write ALL content to fulfill the SOPs above. Provide completely original, unique, and deeply thorough paragraphs under the exact headings.
+        - NEVER mention the word "Directive", "Rule", "SOP", or "Competitor" in the article text.
         - NEVER use placeholders like "{focus_keyword}". Use "${focusKeyword}" instead.
         - TARGET: Aim for ${settings.targetWordCount} words of depth.
         - OPTIMIZATION: Natural ${focusKeyword} density 1-2%.
@@ -2283,23 +2327,8 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
       
       if (contentData) {
         result.content = contentData.content || (typeof contentData === 'string' ? contentData : '');
-        
-        // Logical Section Extraction & Image Intelligence Engineering
-        const h2Matches = result.content.match(/<h2[^>]*>(.*?)<\/h2>/gi);
-        if (h2Matches && h2Matches.length > 0) {
-          setGenerationProgress({ step: 4.5, total: 6.5, label: 'Step 4.5: Engineering Section Visuals' });
-          const imagePrompts = await Promise.all(h2Matches.slice(0, 3).map(async (h2, idx) => {
-            const sectionTitle = h2.replace(/<[^>]*>/g, '');
-            const prompt = await engineerPromptForSection(sectionTitle, `Article Context: ${result.title}. Focus on the theme of "${sectionTitle}".`);
-            return {
-              prompt,
-              alt: sectionTitle,
-              url: '',
-              filename: ''
-            };
-          }));
-          result.contentImages = imagePrompts;
-        }
+        // Skipping multiple content image generation per user request
+        result.contentImages = [];
       }
 
       // Step 5: FAQ & Conclusion
@@ -2343,42 +2372,44 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
       // Final Assembly
       const metrics: MetricValue[] = Array.isArray(result.comparison_metrics) 
         ? result.comparison_metrics.map((m: any) => ({
-            label: m.label,
-            competitorScore: m.competitor_score,
-            yourScore: m.user_score,
-            reasoning: m.reasoning
+            label: m.label || '',
+            competitorScore: m.competitor_score || 0,
+            yourScore: m.user_score || m.your_score || 0,
+            reasoning: m.reasoning || ''
           }))
         : [];
 
-      const lsiPool = settings.lsiKeywords ? Array.from(new Set(dataToUse.flatMap(c => c.lsiKeywords || []))).slice(0, 30) as string[] : [];
+      const lsiPool = settings.lsiKeywords ? Array.from(new Set(dataToUse.flatMap(c => (c as any).lsiKeywords || []))).slice(0, 30) as string[] : [];
 
       const finalContent = injectImages(result.content, result.contentImages, settings.imagePlacement);
 
-      const assembledBlogPost: BlogPost = {
+      const assembledBlogPost = {
         title: result.title || 'Untitled Draft',
         // preserve raw HTML and create plain-text editor-friendly fields
         rawIntroduction: result.introduction || '',
-        introduction: htmlToPlainText(result.introduction),
-        rawContent: finalContent,
-        content: htmlToPlainText(finalContent),
-        faq: result.faq || [],
+        introduction: htmlToPlainText(result.introduction || ''),
+        rawContent: finalContent || '',
+        content: htmlToPlainText(finalContent || ''),
+        faq: (result.faq || []).map((f: any) => ({ question: f.question || '', answer: f.answer || '' })),
         rawConclusion: result.conclusion || '',
         conclusion: htmlToPlainText(result.conclusion || ''),
-        meta_title: result.meta_title,
-        meta_description: result.meta_description,
-        targetLsiKeywords: lsiPool,
-        comparisonMetrics: metrics,
+        meta_title: result.meta_title || '',
+        meta_description: result.meta_description || '',
+        targetLsiKeywords: lsiPool || [],
+        comparisonMetrics: metrics || [],
         featuredImage: result.featured_image_prompt ? {
           url: '',
           alt: result.title || 'Featured Image',
           prompt: result.featured_image_prompt,
           filename: '',
           title: ''
-        } : undefined,
-        status: 'draft',
+        } : null,
+        status: 'draft' as const,
         createdAt: serverTimestamp(),
         contentImages: result.contentImages || []
       };
+      
+      console.log("\n\n=== FINAL ASSEMBLED BLOG POST ===\n", assembledBlogPost, "\n=================================\n\n");
       
       const draftId = await savePostToFirestore(assembledBlogPost);
       const draftWithId = { ...assembledBlogPost, id: draftId };
@@ -3491,7 +3522,7 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
                           </div>
 
                           <input 
-                            value={blogDraft.title || ''}
+                            value={sanitizeHeadingText(blogDraft.title)}
                             onChange={(e) => setBlogDraft({...blogDraft, title: e.target.value})}
                             className={cn(
                               "w-full text-4xl font-extrabold border-none focus:ring-0 p-0 mb-8 bg-transparent transition-all",
@@ -3506,7 +3537,7 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
                           <section>
                             <h4 className="text-[10px] uppercase tracking-[0.2em] font-black text-indigo-500 mb-3">01. Introduction</h4>
                             <SimpleHtmlEditor 
-                              value={blogDraft.introduction}
+                              value={sanitizeHeadingText(blogDraft.introduction)}
                               onChange={(v) => setBlogDraft({...blogDraft, introduction: v})}
                               theme={settings.theme}
                               placeholder="Draft compelling introduction..."
@@ -3526,7 +3557,7 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
                           <section>
                             <h4 className="text-[10px] uppercase tracking-[0.2em] font-black text-indigo-500 mb-3">02. Main Pillar Content</h4>
                             <SimpleHtmlEditor 
-                              value={blogDraft.content}
+                              value={sanitizeHeadingText(blogDraft.content)}
                               onChange={(v) => setBlogDraft({...blogDraft, content: v})}
                               theme={settings.theme}
                               placeholder="Write pillar content bodies..."
