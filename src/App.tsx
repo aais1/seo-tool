@@ -511,6 +511,7 @@ export default function App() {
 
   const [blogDraft, setBlogDraft] = useState<BlogPost | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isImageGenerating, setIsImageGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState({ step: 0, total: 7, label: '' });
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishProgress, setPublishProgress] = useState(0);
@@ -1394,6 +1395,7 @@ OUTPUT RULE:
       showNotification("Critical System Fault: Gemini Core Key missing", 'error');
       return;
     }
+    if (type === 'featured') setIsImageGenerating(true);
     const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
     try {
       showNotification(`Generating visual asset (${aspectRatio})...`, 'success');
@@ -1501,8 +1503,10 @@ OUTPUT RULE:
         });
       }
       showNotification("Visual asset engineered");
+      if (type === 'featured') setIsImageGenerating(false);
       return;
     } catch (err: any) {
+      if (type === 'featured') setIsImageGenerating(false);
       console.error("Visual generation error:", err);
       const { message, detail, solution } = formatAIError(err);
       
@@ -3441,16 +3445,21 @@ OUTPUT RULES: Generate full-scale HTML content. Apply the directives above to ev
                             "mb-10 p-6 rounded-xl border-4 border-dashed relative group overflow-hidden",
                             settings.theme === 'dark' ? "bg-slate-900/50 border-slate-800" : "bg-slate-50 border-slate-200"
                           )}>
-                            {blogDraft.featuredImage?.url ? (
+                            {isImageGenerating ? (
+                              <div className="aspect-video w-full rounded-lg overflow-hidden border-2 border-indigo-800/50 bg-slate-950 relative flex flex-col items-center justify-center gap-4">
+                                <div className="w-12 h-12 rounded-full border-4 border-indigo-600 border-t-transparent animate-spin" />
+                                <p className="text-[11px] font-black uppercase tracking-widest text-indigo-400 animate-pulse">Rendering Visual Asset...</p>
+                              </div>
+                            ) : blogDraft.featuredImage?.url ? (
                               <div className="space-y-6">
                                 <div className="aspect-video w-full rounded-lg overflow-hidden border-2 border-slate-800 bg-slate-950 relative">
-                                  <img 
-                                    src={blogDraft.featuredImage.url} 
+                                  <img
+                                    src={blogDraft.featuredImage.url}
                                     alt={blogDraft.featuredImage.alt}
                                     className="w-full h-full object-cover"
                                     referrerPolicy="no-referrer"
                                   />
-                                  <button 
+                                  <button
                                     onClick={() => setBlogDraft({...blogDraft, featuredImage: undefined})}
                                     className="absolute top-4 right-4 p-2 bg-red-600 text-white rounded-full hover:bg-red-700 transition-all shadow-xl"
                                   >
