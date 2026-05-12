@@ -1108,6 +1108,7 @@ const modelsToTry = [
 
       for (const modelId of modelsToTry) {
         try {
+          console.log('[AI LOG] Grounding INPUT', { model: modelId, prompt });
           const result = await ai.models.generateContent({
             model: modelId,
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -1117,6 +1118,7 @@ const modelsToTry = [
               temperature: 0.1
             }
           });
+          console.log('[AI LOG] Grounding OUTPUT', result.text);
           if (result.text) {
             response = result;
             break;
@@ -1216,16 +1218,17 @@ OUTPUT RULE:
       if (!apiKey) throw new Error("Gemini Key Missing: Proofreader requires an API key in Settings.");
       
       const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
-      
+      const proofreadInput = `${systemPrompt}\n\n${gradeInstruction}\n${toneInstruction}\n${sopInstruction}\n${contextInstruction}\n\nCONTENT:\n${cleanedContent}`;
+      console.log('[AI LOG] Proofreader INPUT', { model: 'models/gemini-2.5-flash', prompt: proofreadInput });
       const response = await ai.models.generateContent({
   model: 'models/gemini-2.5-flash',
-        contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${gradeInstruction}\n${toneInstruction}\n${sopInstruction}\n${contextInstruction}\n\nCONTENT:\n${cleanedContent}` }] }],
+        contents: [{ role: 'user', parts: [{ text: proofreadInput }] }],
         config: {
           temperature: 0.1,
           topP: 0.9
         }
       });
-      
+      console.log('[AI LOG] Proofreader OUTPUT', response.text);
       const refinedContent = response.text || '';
 
       if (refinedContent) {
@@ -1268,14 +1271,14 @@ OUTPUT RULE:
       if (!apiKey) throw new Error("Gemini Key Missing: Refinement requires an API key in Settings.");
       
       const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
-      
+      console.log('[AI LOG] Structure Refinement INPUT', { model: 'models/gemini-2.5-flash', prompt });
       const response = await ai.models.generateContent({
   model: 'models/gemini-2.5-flash',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
       });
-      
+      console.log('[AI LOG] Structure Refinement OUTPUT', response.text);
       const text = response.text || '';
-      
+
       // Inject as a system note or show in a specialized UI
       setBlogDraft({
         ...blogDraft,
@@ -1436,6 +1439,7 @@ OUTPUT RULE:
       // Try configured/recommended models but use the image-specific API method (generateImages)
       for (const modelId of recommendedModels) {
         try {
+          console.log('[AI LOG] Image Generation INPUT', { model: modelId, prompt, aspectRatio });
           const imgResp = await ai.models.generateImages({
             model: modelId,
             prompt,
@@ -1445,6 +1449,7 @@ OUTPUT RULE:
             }
           });
           const b64 = imgResp.generatedImages?.[0]?.image?.imageBytes;
+          console.log('[AI LOG] Image Generation OUTPUT', b64 ? `[base64 image, length=${b64.length}]` : 'no image data');
           if (b64) {
             imageUrl = `data:image/png;base64,${b64}`;
             break;
@@ -1766,14 +1771,17 @@ OUTPUT RULE:
     const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
     try {
       showNotification("Engineering visual prompt for section...", 'success');
-      const response = await ai.models.generateContent({
-        model: 'models/gemini-2.5-flash',
-        contents: `Create a professional, cinematic visual prompt for an AI image generator (like Midjourney or DALL-E) based on this content section.
+      const sectionPromptInput = `Create a professional, cinematic visual prompt for an AI image generator (like Midjourney or DALL-E) based on this content section.
       CONTEXT: ${context}
       SECTION CONTENT: ${sectionText.substring(0, 2000)}
-      
-      Return ONLY the optimized prompt text. Focus on descriptive elements, lighting, and style. No labels.`
+
+      Return ONLY the optimized prompt text. Focus on descriptive elements, lighting, and style. No labels.`;
+      console.log('[AI LOG] Section Prompt Engineer INPUT', { model: 'models/gemini-2.5-flash', prompt: sectionPromptInput });
+      const response = await ai.models.generateContent({
+        model: 'models/gemini-2.5-flash',
+        contents: sectionPromptInput
       });
+      console.log('[AI LOG] Section Prompt Engineer OUTPUT', response.text);
       return response.text || '';
     } catch (err: any) {
       console.error("Prompt Engineering Failure:", err);
@@ -1793,15 +1801,17 @@ OUTPUT RULE:
     const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
     try {
       showNotification("Engineering visual prompt from content...", 'success');
-      const response = await ai.models.generateContent({
-        model: 'models/gemini-2.0-flash-lite',
-        contents: `Analyze the mood, industry, and core message of this blog content. Then, create a professional, high-converting cinematic visual prompt for an AI image generator (like Midjourney or DALL-E) to create a featured image.
+      const featuredPromptInput = `Analyze the mood, industry, and core message of this blog content. Then, create a professional, high-converting cinematic visual prompt for an AI image generator (like Midjourney or DALL-E) to create a featured image.
       TITLE: ${blogDraft.title}
       INTRODUCTION: ${blogDraft.introduction.substring(0, 1000)}
-      
-      Return ONLY the optimized prompt text. The prompt should be descriptive, focus on lighting, texture, and style appropriate for the industry, and avoid any generic text labels.`
+
+      Return ONLY the optimized prompt text. The prompt should be descriptive, focus on lighting, texture, and style appropriate for the industry, and avoid any generic text labels.`;
+      console.log('[AI LOG] Featured Image Prompt Engineer INPUT', { model: 'models/gemini-2.0-flash-lite', prompt: featuredPromptInput });
+      const response = await ai.models.generateContent({
+        model: 'models/gemini-2.0-flash-lite',
+        contents: featuredPromptInput
       });
-      
+      console.log('[AI LOG] Featured Image Prompt Engineer OUTPUT', response.text);
       const promptText = response.text || '';
       setBlogDraft({
         ...blogDraft,
@@ -2020,6 +2030,7 @@ OUTPUT RULE:
       try {
         const modelToUse = 'models/gemini-2.5-flash';
         console.info(`Using Gemini model: ${modelToUse}`);
+        console.log('[AI LOG] callAIModel Gemini INPUT', { model: modelToUse, systemPrompt, prompt });
         const response = await ai.models.generateContent({
           model: modelToUse,
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -2030,7 +2041,7 @@ OUTPUT RULE:
             responseSchema: responseSchema || undefined
           }
         });
-
+        console.log('[AI LOG] callAIModel Gemini OUTPUT', response?.text);
         return response?.text || '';
       } catch (err: any) {
         const { message, detail, solution } = formatAIError(err);
@@ -2039,12 +2050,14 @@ OUTPUT RULE:
     }
 
     // Non-Gemini models use the server proxy
+    const proxyPrompt = systemPrompt ? `SYSTEM: ${systemPrompt}\n\nUSER: ${prompt}` : prompt;
+    console.log('[AI LOG] callAIModel Proxy INPUT', { model: modelId, systemPrompt, prompt });
     const res = await fetch('/api/ai/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: modelId,
-        prompt: systemPrompt ? `SYSTEM: ${systemPrompt}\n\nUSER: ${prompt}` : prompt,
+        prompt: proxyPrompt,
         openaiKey: settings.openaiKey,
         anthropicKey: settings.anthropicKey
       }),
@@ -2055,7 +2068,9 @@ OUTPUT RULE:
       throw new Error(errorData.details || errorData.error || `HTTP ${res.status}`);
     }
     const data = await res.json();
-    return typeof data === 'string' ? data : (data.content || JSON.stringify(data));
+    const proxyOutput = typeof data === 'string' ? data : (data.content || JSON.stringify(data));
+    console.log('[AI LOG] callAIModel Proxy OUTPUT', proxyOutput);
+    return proxyOutput;
   };
 
   const handleGenerate = async (researchData?: CompetitorData[]) => {
@@ -2109,7 +2124,7 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
         - REFERENCE: Use the provided Competitor Data as the primary source of truth for factual information and topical depth.
         - STRUCTURE: Identify and REPLICATE the most successful heading structures (H2s and H3s) found across the top-ranking competitors.
         - AUTHORITY: Adopt a professional, authoritative tone that fills critical gaps identified in the competitor analysis.
-        - STRICT EXECUTION: You must follow the "Writing Directives" for each section exactly. Do NOT mention or repeat these directives in your output.
+        - STRICT EXECUTION: You must follow the writing directives in your system instructions EXACTLY for each section. Do NOT mention or repeat these directives in your output.
         
         COMPETITOR ANALYSIS (REFERENCE DATA):
         ${competitorDataChunks}
@@ -2252,22 +2267,28 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
 
       // Step 2: Title & Meta Generation
       setGenerationProgress({ step: 2, total: 6.5, label: 'Step 2: Engineering Title & Meta Identity' });
+      const titleSystemPrompt = settings.prompts.title
+        ? `You are a master SEO copywriter. You MUST follow the writing directive below EXACTLY — it overrides any default behavior.
+
+MANDATORY WRITING DIRECTIVE:
+${processSOP(settings.prompts.title)}
+
+OUTPUT: Return ONLY valid JSON. Zero conversational filler.`
+        : `You are a master of conversion. Return ONLY valid JSON. Zero conversational filler.`;
+
       const titleData = await callStep('Title', `
         ${enhancedContext}
-        
-        GOAL: Generate a high-CTR SEO Title, Meta Title, and Meta Description.
-        
-        WRITING DIRECTIVE (EXECUTE SILENTLY): 
-        ${processSOP(settings.prompts.title)}
-        
-        REQUIRED JSON SCHEMA: 
-        { 
-          "title": "H1 tag content here", 
-          "meta_title": "SEO title tag content", 
-          "meta_description": "Meta summary here", 
-          "featured_image_prompt": "Detailed AI art mirror prompt" 
+
+        GOAL: Generate a high-CTR SEO Title, Meta Title, and Meta Description following your system instruction writing directive exactly.
+
+        REQUIRED JSON SCHEMA:
+        {
+          "title": "H1 tag content here",
+          "meta_title": "SEO title tag content",
+          "meta_description": "Meta summary here",
+          "featured_image_prompt": "Detailed AI art mirror prompt"
         }
-      `, sopModels.title, "You are a master of conversion. Return ONLY valid JSON. Zero conversational filler.");
+      `, sopModels.title, titleSystemPrompt);
       
       if (titleData) {
         result.title = titleData.title || titleData;
@@ -2278,18 +2299,24 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
 
       // Step 3: Introduction Engineering
       setGenerationProgress({ step: 3, total: 6.5, label: 'Step 3: Drafting Conversion Introduction' });
+      const introSystemPrompt = settings.prompts.introduction
+        ? `You are an elite SEO copywriter. You MUST follow the writing directive below EXACTLY — it overrides any default behavior.
+
+MANDATORY WRITING DIRECTIVE:
+${processSOP(settings.prompts.introduction)}
+
+OUTPUT: Return ONLY JSON. No preamble.`
+        : `Act as an elite copywriter. Return ONLY JSON. No preamble.`;
+
       const introData = await callStep('Introduction', `
         ${enhancedContext}
         ARTICLE TITLE: ${result.title}
-        
-        GOAL: Generate a persuasive introduction that integrates the keyword "${focusKeyword}".
-        
-        WRITING DIRECTIVE (EXECUTE SILENTLY): 
-        ${processSOP(settings.prompts.introduction)}
-        
+
+        GOAL: Generate a persuasive introduction following your system instruction writing directive exactly.
+
         INJECTION RULE: The focus keyword "${focusKeyword}" must be present within the first two sentences.
         RETURN JSON: { "introduction": "HTML formatted content here" }
-      `, sopModels.introduction, "Act as an elite copywriter. Return ONLY JSON. No preamble.");
+      `, sopModels.introduction, introSystemPrompt);
       
       if (introData) {
         result.introduction = introData.introduction || (typeof introData === 'string' ? introData : '');
@@ -2297,33 +2324,40 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
 
       // Step 4: Core Content & LSI Optimization
       setGenerationProgress({ step: 4, total: 6.5, label: 'Step 4: Executing Multi-Section Content Architecture' });
+      const contentSystemPrompt = `You are an Expert SEO Content Generator. You MUST follow both directives below EXACTLY — they override any default behavior.
+
+MANDATORY CONTENT WRITING DIRECTIVE (governs HOW you write every paragraph):
+${processSOP(settings.prompts.content) || 'Write comprehensive, authoritative, factual paragraphs that fill content gaps found in competitor pages.'}
+
+MANDATORY SEMANTIC / LSI DIRECTIVE (governs keyword integration):
+${settings.lsiKeywords ? (processSOP(settings.prompts.lsi) || `Naturally integrate these semantic terms throughout: ${lsiTerms}.`) : `Naturally integrate these semantic terms throughout: ${lsiTerms}.`}
+
+OUTPUT RULES: Generate full-scale HTML content. Apply the directives above to every paragraph under every heading. Silent execution. JSON output only.`;
+
       const contentPrompt = `
         ${enhancedContext}
         ARTICLE TITLE: ${result.title}
         INTRO PREVIEW: ${result.introduction.substring(0, 300)}...
-        
-        GOAL: Generate the full body content in HTML format. 
-        
-        CRITICAL STRUCTURE RULE (DO NOT IGNORE): 
-        You MUST use EXACTLY the following headings from the Master Blueprint. Do not alter them, rephrase them, omit them, or invent new ones. Keep the headings exactly identical:
+
+        GOAL: Generate the full body content in HTML format.
+
+        YOUR ROLE: Your system instructions define HOW to write (style, structure, keyword usage). The heading list below defines WHAT structure to follow. These two are complementary — apply your writing directive to every paragraph under every heading listed.
+
+        MANDATORY HEADING STRUCTURE (use every heading exactly as written — no changes, no omissions, no additions):
         ${strategyData?.outline?.join('\n        ') || 'Follow competitor heading patterns'}
-        
-        CRITICAL SOP DIRECTIVES (STRICTLY ENFORCED):
-        You MUST write the paragraphs beneath each heading strictly following these rules:
-        1. CONTENT FLOW SOP: ${processSOP(settings.prompts.content)}
-        2. SEMANTIC LAYER SOP: ${settings.lsiKeywords ? processSOP(settings.prompts.lsi) : `Use these terms: ${lsiTerms}.`}
-        
+
         MANDATORY CONSTRAINTS:
-        - Write ALL content to fulfill the SOPs above. Provide completely original, unique, and deeply thorough paragraphs under the exact headings.
-        - NEVER mention the word "Directive", "Rule", "SOP", or "Competitor" in the article text.
+        - Apply the system instruction writing directives to every section — this is non-negotiable.
+        - Write completely original, deeply thorough paragraphs under each heading.
+        - NEVER mention the words "Directive", "Rule", "SOP", or "Competitor" in the article text.
         - NEVER use placeholders like "{focus_keyword}". Use "${focusKeyword}" instead.
         - TARGET: Aim for ${settings.targetWordCount} words of depth.
         - OPTIMIZATION: Natural ${focusKeyword} density 1-2%.
-        
+
         FORMATTING: Return raw HTML (H2, H3, P, UL, LI) within:
         { "content": "..." }
       `;
-      const contentData = await callStep('Content', contentPrompt, sopModels.content, "Full-scale content generation. HTML format. Silent execution. JSON output only.");
+      const contentData = await callStep('Content', contentPrompt, sopModels.content, contentSystemPrompt);
       
       if (contentData) {
         result.content = contentData.content || (typeof contentData === 'string' ? contentData : '');
@@ -2339,28 +2373,36 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
         if (settings.includeConclusion) tasks.push("a comprehensive conclusion");
         if (settings.includeFaqs) tasks.push("exactly 5 FAQs");
         
+        const closingSystemPrompt = [
+          `You are an expert SEO content strategist. You MUST follow the writing directives below EXACTLY — they override any default behavior.\n`,
+          settings.includeConclusion && settings.prompts.conclusion
+            ? `MANDATORY CONCLUSION DIRECTIVE:\n${processSOP(settings.prompts.conclusion)}\n`
+            : '',
+          settings.includeFaqs && settings.prompts.faq
+            ? `MANDATORY FAQ DIRECTIVE:\n${processSOP(settings.prompts.faq)}\n`
+            : '',
+          `OUTPUT: Closing logic execution. Silent mode. JSON only.`
+        ].filter(Boolean).join('\n');
+
         const closingPrompt = `
           ${enhancedContext}
           ARTICLE TITLE: ${result.title}
-          
-          GOAL: Generate ${tasks.join(' and ')}.
-          
-          WRITING DIRECTIVES:
-          ${settings.includeConclusion ? `- CLOSING: ${processSOP(settings.prompts.conclusion)}` : ''}
-          ${settings.includeFaqs ? `- FAQS: ${processSOP(settings.prompts.faq)}` : ''}
-          
+
+          GOAL: Generate ${tasks.join(' and ')} following your system instruction directives exactly.
+
           CONSTRAINTS:
-          ${settings.includeConclusion ? `- Start with exactly: <h2>Summary & Next Steps</h2> (or better contextual SEO heading).` : ''}
+          ${settings.includeConclusion ? `- Start conclusion with an appropriate SEO-optimized <h2> heading.` : ''}
+          - Apply your system instruction directives to every section you generate.
           - No mention of "Directive" or "SOP" in final text.
-          
+
           RETURN JSON:
-          { 
-            "conclusion": "HTML...", 
+          {
+            "conclusion": "HTML...",
             "faq": [ { "question": "...", "answer": "..." } ],
             "comparison_metrics": [ { "label": "Semantic Score", "competitor_score": 70, "your_score": 98, "reasoning": "Deeper LSI integration." } ]
           }
         `;
-        const closingData = await callStep('Closing', closingPrompt, sopModels.conclusion, "Closing logic execution. Silent mode. JSON only.");
+        const closingData = await callStep('Closing', closingPrompt, sopModels.conclusion, closingSystemPrompt);
         
         if (closingData) {
           if (settings.includeConclusion) result.conclusion = closingData.conclusion || '';

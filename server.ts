@@ -29,6 +29,7 @@ async function startServer() {
       if (model.startsWith("gpt")) {
         if (!openaiKey) return res.status(400).json({ error: "OpenAI API Key required" });
         const openai = new OpenAI({ apiKey: openaiKey });
+        console.log('[AI LOG] OpenAI INPUT', { model, systemPrompt, prompt });
         const response = await openai.chat.completions.create({
           model: model,
           messages: [
@@ -38,12 +39,15 @@ async function startServer() {
           response_format: { type: "json_object" },
           temperature: 0.7,
         });
-        return res.json(JSON.parse(response.choices[0].message.content || "{}"));
+        const openaiOutput = response.choices[0].message.content || "{}";
+        console.log('[AI LOG] OpenAI OUTPUT', openaiOutput);
+        return res.json(JSON.parse(openaiOutput));
       }
 
       if (model.startsWith("claude")) {
         if (!anthropicKey) return res.status(400).json({ error: "Anthropic API Key required" });
         const anthropic = new Anthropic({ apiKey: anthropicKey });
+        console.log('[AI LOG] Anthropic INPUT', { model, systemPrompt, prompt });
         const response = await anthropic.messages.create({
           model: model,
           max_tokens: 4000,
@@ -52,6 +56,7 @@ async function startServer() {
           temperature: 0.7,
         });
         const text = response.content.filter(c => c.type === 'text').map(c => c.text).join("");
+        console.log('[AI LOG] Anthropic OUTPUT', text);
         return res.json(JSON.parse(text));
       }
 
