@@ -6011,6 +6011,9 @@ function PreviewModal({ blogDraft, onClose, theme }: { blogDraft: BlogPost, onCl
     const intro = (d as any).rawIntroduction || d.introduction || '';
     const content = (d as any).rawContent || d.content || '';
     const conclusion = (d as any).rawConclusion || d.conclusion || '';
+    const faqHtml = d.faq && d.faq.length > 0
+      ? `<h2>Frequently Asked Questions</h2>${d.faq.map((f: FAQItem) => `<h3>${escapeHtml(f.question)}</h3>${f.answer}`).join('')}`
+      : '';
     const featured = d.featuredImage?.url ? (`<figure><img src="${escapeHtml(d.featuredImage!.url!)}" alt="${escapeHtml(d.featuredImage!.alt || '')}" style="width:100%;height:auto;border-radius:12px;object-fit:cover;margin-bottom:20px;"/></figure>`) : '';
 
     // Minimal inline styling to approximate site render (prose-like)
@@ -6031,7 +6034,7 @@ function PreviewModal({ blogDraft, onClose, theme }: { blogDraft: BlogPost, onCl
       figure{margin:0 0 2rem}
     `;
 
-    return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><meta name="description" content="${meta}"><meta name="viewport" content="width=device-width,initial-scale=1"/><style>${style}</style></head><body><div class="container"><article class="prose">${featured}${intro}${content}${conclusion}</article></div></body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><meta name="description" content="${meta}"><meta name="viewport" content="width=device-width,initial-scale=1"/><style>${style}</style></head><body><div class="container"><article class="prose">${featured}${intro}${content}${faqHtml}${conclusion}</article></div></body></html>`;
   };
   return (
     <motion.div 
@@ -6130,7 +6133,7 @@ function PreviewModal({ blogDraft, onClose, theme }: { blogDraft: BlogPost, onCl
                     {blogDraft.faq.map((f, i) => (
                       <div key={i} className="space-y-4">
                         <h3 className="text-2xl font-black text-indigo-500 uppercase tracking-tight">{f.question}</h3>
-                        <p className="text-lg leading-relaxed opacity-80">{f.answer}</p>
+                        <div className="text-lg leading-relaxed opacity-80 blog-content" dangerouslySetInnerHTML={{ __html: f.answer }} />
                       </div>
                     ))}
                   </div>
