@@ -2563,8 +2563,34 @@ OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>,
     showNotification("Initiating WordPress Node Sync...");
     setIsPublishing(true);
     setPublishProgress(10);
+
+    console.log("\n========== [CLIENT] WP PUBLISH START ==========");
+    console.log("[CLIENT] WP URL:", settings.wpUrl);
+    console.log("[CLIENT] WP Username:", settings.wpUsername);
+    console.log("[CLIENT] App Password set:", !!settings.wpAppPassword);
+    console.log("[CLIENT] Post title:", blogDraft.title);
+    console.log("[CLIENT] Publish status:", blogDraft.scheduledAt ? 'future' : publishStatus);
+    console.log("[CLIENT] Scheduled at:", blogDraft.scheduledAt || "none");
+    console.log("[CLIENT] Category:", selectedCategory || "none");
+    console.log("[CLIENT] Tags:", selectedTags);
+    console.log("[CLIENT] Featured image URL present:", !!(blogDraft.featuredImage?.url));
+    console.log("[CLIENT] Introduction length:", blogDraft.introduction?.length ?? 0);
+    console.log("[CLIENT] Content length:", blogDraft.content?.length ?? 0);
+    console.log("[CLIENT] FAQ items:", blogDraft.faq?.length ?? 0);
+    console.log("[CLIENT] Conclusion length:", blogDraft.conclusion?.length ?? 0);
+
     try {
       setPublishProgress(25);
+      console.log("[CLIENT] Sending POST to /api/wordpress/publish...");
+
+      const postContent = `
+              ${blogDraft.introduction || ''}
+              ${blogDraft.content || ''}
+              ${blogDraft.faq && blogDraft.faq.length > 0 ? `<h2>Frequently Asked Questions</h2>${blogDraft.faq.map(f => `<h3>${f.question}</h3><p>${f.answer}</p>`).join('')}` : ''}
+              ${blogDraft.conclusion || ''}
+            `;
+      console.log("[CLIENT] Total content payload length:", postContent.length, "chars");
+
       const res = await fetch('/api/wordpress/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2577,33 +2603,35 @@ OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>,
             title: blogDraft.title,
             categories: selectedCategory ? [selectedCategory] : [],
             tags: selectedTags,
-            content: `
-              ${blogDraft.introduction || ''}
-              ${blogDraft.content || ''}
-              ${blogDraft.faq && blogDraft.faq.length > 0 ? `<h2>Frequently Asked Questions</h2>${blogDraft.faq.map(f => `<h3>${f.question}</h3><p>${f.answer}</p>`).join('')}` : ''}
-              ${blogDraft.conclusion || ''}
-            `,
+            content: postContent,
             status: blogDraft.scheduledAt ? 'future' : publishStatus,
             date: blogDraft.scheduledAt ? new Date(blogDraft.scheduledAt).toISOString() : undefined
           }
         })
       });
-      
+
       setPublishProgress(60);
+      console.log("[CLIENT] Server responded — HTTP status:", res.status);
+
       const data = await res.json();
       setPublishProgress(80);
-      
+      console.log("[CLIENT] Response body:", data);
+
       if (data.error) {
+        console.error("[CLIENT] Server returned error:", data.error, "|", data.details);
         showNotification(`${data.error}: ${data.details || ''}`, 'error');
         setIsPublishing(false);
         setPublishProgress(0);
+        console.log("========== [CLIENT] WP PUBLISH FAILED ==========\n");
         return;
       }
 
       setPublishProgress(95);
-      const updatedDraft: BlogPost = { 
-        ...blogDraft, 
-        status: blogDraft.scheduledAt ? 'scheduled' : 'published', 
+      console.log("[CLIENT] WP post created — ID:", data.id, "| Link:", data.link, "| Status:", data.status);
+
+      const updatedDraft: BlogPost = {
+        ...blogDraft,
+        status: blogDraft.scheduledAt ? 'scheduled' : 'published',
         wpId: data.id,
         link: data.link,
         recurrence: blogDraft.recurrence || 'none'
@@ -2612,18 +2640,21 @@ OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>,
       savePostToFirestore(updatedDraft);
       setPublishProgress(100);
       showNotification("Post Live on WordPress Terminal");
-      
+      console.log("[CLIENT] Draft updated in Firestore — wpId:", data.id);
+      console.log("========== [CLIENT] WP PUBLISH DONE ==========\n");
+
       setTimeout(() => {
         setIsPublishing(false);
         setPublishProgress(0);
       }, 800);
     } catch (err: any) {
-      console.error("WordPress Node Sync Error:", {
+      console.error("[CLIENT] Unexpected publish error:", {
         endpoint: settings.wpUrl,
         username: settings.wpUsername,
         error: err,
         response: err.response?.data
       });
+      console.log("========== [CLIENT] WP PUBLISH FAILED (EXCEPTION) ==========\n");
 
       let message = "Sync Protocol Failure";
       let detail = err.response?.data?.message || err.message || "The connection to your WordPress node was interrupted.";

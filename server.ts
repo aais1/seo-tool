@@ -357,22 +357,39 @@ async function startServer() {
   // API Route: Publish to WordPress
   app.post("/api/wordpress/publish", async (req, res) => {
     const { wpUrl, wpUsername, wpAppPassword, postData, featuredImageUrl } = req.body;
+
+    console.log("\n========== [WP PUBLISH] START ==========");
+    console.log("[WP PUBLISH] Target URL:", wpUrl);
+    console.log("[WP PUBLISH] Username:", wpUsername);
+    console.log("[WP PUBLISH] App Password provided:", !!wpAppPassword);
+    console.log("[WP PUBLISH] Post title:", postData?.title);
+    console.log("[WP PUBLISH] Post status:", postData?.status);
+    console.log("[WP PUBLISH] Post date (scheduled):", postData?.date || "none");
+    console.log("[WP PUBLISH] Categories:", postData?.categories);
+    console.log("[WP PUBLISH] Tags:", postData?.tags);
+    console.log("[WP PUBLISH] Content length (chars):", postData?.content?.length ?? 0);
+    console.log("[WP PUBLISH] Featured image provided:", !!featuredImageUrl);
+
     try {
       const auth = Buffer.from(`${wpUsername}:${wpAppPassword}`).toString("base64");
-      
+      console.log("[WP PUBLISH] Basic Auth header built (base64)");
+
       let featuredMediaId = 0;
 
       // Handle Featured Image Upload if provided
       if (featuredImageUrl && featuredImageUrl.startsWith('data:image')) {
+        const mimeMatch = featuredImageUrl.match(/^data:(image\/\w+);base64,/);
+        const mimeType = mimeMatch?.[1] || 'image/png';
+        const ext = mimeType.split('/')[1] || 'png';
+        const base64Data = featuredImageUrl.split(',')[1];
+        const buffer = Buffer.from(base64Data, 'base64');
+
+        console.log("[WP PUBLISH] [IMAGE] Uploading featured image...");
+        console.log("[WP PUBLISH] [IMAGE] MIME type:", mimeType);
+        console.log("[WP PUBLISH] [IMAGE] File size (bytes):", buffer.length);
+        console.log("[WP PUBLISH] [IMAGE] Endpoint:", `${wpUrl}/wp-json/wp/v2/media`);
+
         try {
-          const base64Data = featuredImageUrl.split(',')[1];
-          const buffer = Buffer.from(base64Data, 'base64');
-          
-          // Issue 13: Detect actual MIME type
-          const mimeMatch = featuredImageUrl.match(/^data:(image\/\w+);base64,/);
-          const mimeType = mimeMatch?.[1] || 'image/png';
-          const ext = mimeType.split('/')[1] || 'png';
-          
           const mediaResponse = await axios.post(`${wpUrl}/wp-json/wp/v2/media`, buffer, {
             headers: {
               Authorization: `Basic ${auth}`,
@@ -381,13 +398,20 @@ async function startServer() {
             }
           });
           featuredMediaId = mediaResponse.data.id;
+          console.log("[WP PUBLISH] [IMAGE] Upload success — media ID:", featuredMediaId);
+          console.log("[WP PUBLISH] [IMAGE] Media URL:", mediaResponse.data.source_url);
         } catch (mediaErr: any) {
-          console.error("Media Upload Error:", mediaErr.response?.data || mediaErr.message);
-          return res.status(500).json({ 
-            error: "Media Upload Failed", 
-            details: mediaErr.response?.data?.message || mediaErr.message 
+          console.error("[WP PUBLISH] [IMAGE] Upload FAILED");
+          console.error("[WP PUBLISH] [IMAGE] HTTP status:", mediaErr.response?.status);
+          console.error("[WP PUBLISH] [IMAGE] WP error:", mediaErr.response?.data);
+          console.error("[WP PUBLISH] [IMAGE] Message:", mediaErr.message);
+          return res.status(500).json({
+            error: "Media Upload Failed",
+            details: mediaErr.response?.data?.message || mediaErr.message
           });
         }
+      } else {
+        console.log("[WP PUBLISH] [IMAGE] No featured image to upload (skipped)");
       }
 
       const finalPostData = {
@@ -395,16 +419,33 @@ async function startServer() {
         featured_media: featuredMediaId || undefined
       };
 
+      console.log("[WP PUBLISH] [POST] Sending post to WP REST API...");
+      console.log("[WP PUBLISH] [POST] Endpoint:", `${wpUrl}/wp-json/wp/v2/posts`);
+      console.log("[WP PUBLISH] [POST] Payload keys:", Object.keys(finalPostData));
+      console.log("[WP PUBLISH] [POST] featured_media:", finalPostData.featured_media ?? "none");
+
       const response = await axios.post(`${wpUrl}/wp-json/wp/v2/posts`, finalPostData, {
         headers: { Authorization: `Basic ${auth}` },
-        timeout: 35000 // Issue 17: Add timeout for heavy publish tasks
+        timeout: 35000
       });
+
+      console.log("[WP PUBLISH] [POST] Success — WP post ID:", response.data.id);
+      console.log("[WP PUBLISH] [POST] Post link:", response.data.link);
+      console.log("[WP PUBLISH] [POST] Post status:", response.data.status);
+      console.log("[WP PUBLISH] [POST] HTTP status:", response.status);
+      console.log("========== [WP PUBLISH] DONE ==========\n");
+
       res.json(response.data);
     } catch (error: any) {
-      console.error("WP Publish Error:", error.response?.data || error.message);
-      res.status(500).json({ 
-        error: "Post Publishing Failed", 
-        details: error.response?.data?.message || error.message 
+      console.error("[WP PUBLISH] FATAL ERROR");
+      console.error("[WP PUBLISH] HTTP status:", error.response?.status);
+      console.error("[WP PUBLISH] WP error code:", error.response?.data?.code);
+      console.error("[WP PUBLISH] WP error message:", error.response?.data?.message);
+      console.error("[WP PUBLISH] Raw error:", error.message);
+      console.error("========== [WP PUBLISH] FAILED ==========\n");
+      res.status(500).json({
+        error: "Post Publishing Failed",
+        details: error.response?.data?.message || error.message
       });
     }
   });
