@@ -2356,13 +2356,22 @@ ${processSOP(settings.prompts.title)}
 OUTPUT: Return ONLY valid JSON. Zero conversational filler.`
         : `You are a master of conversion. Return ONLY valid JSON. Zero conversational filler.`;
 
+      // If the user pre-set a title in the Structure Editor, lock it in immediately
+      if (editableTitle) {
+        result.title = editableTitle;
+      }
+
       const titleData = await callStep('Title', `
         ${enhancedContext}
+        ${editableTitle ? `\nLOCKED ARTICLE TITLE (do NOT change or rephrase this): "${editableTitle}"\n` : ''}
 
-        GOAL: Generate a high-CTR SEO Title, Meta Title, and Meta Description following your system instruction writing directive exactly.
+        GOAL: ${editableTitle
+          ? `Generate a Meta Title and Meta Description for the LOCKED title above. Do NOT invent a new title — use the locked title exactly as "title" in your response.`
+          : 'Generate a high-CTR SEO Title, Meta Title, and Meta Description following your system instruction writing directive exactly.'
+        }
 
         HARD CHARACTER LIMITS (count every space and punctuation mark):
-        - "title" (H1): under 60 characters. Example length: "Unlock Retention: Predict Customer Churn with AI" = 49 chars ✓
+        - "title" (H1): ${editableTitle ? `MUST be exactly: "${editableTitle}"` : 'under 60 characters. Example length: "Unlock Retention: Predict Customer Churn with AI" = 49 chars ✓'}
         - "meta_title": under 60 characters. Example: "Predict Customer Churn with AI & Boost Profits" = 46 chars ✓
         - "meta_description": 150–160 characters EXACTLY. Example of 155 chars: "Master AI-powered churn prediction. Our guide covers data, models, and strategies to retain customers and boost profits. Start now." — count yours before outputting.
         - "meta_description" MUST end with an imperative CTA (e.g., "Start today.", "Get started now.", "Learn more.").
@@ -2375,9 +2384,10 @@ OUTPUT: Return ONLY valid JSON. Zero conversational filler.`
           "featured_image_prompt": "Detailed AI art mirror prompt"
         }
       `, sopModels.title, titleSystemPrompt);
-      
+
       if (titleData) {
-        result.title = titleData.title || titleData;
+        // Always prefer the user-edited title over whatever the AI returned
+        result.title = editableTitle || titleData.title || titleData;
         result.meta_title = (titleData.meta_title || '').substring(0, 60).replace(/\s\S*$/, '');
         const rawMeta = titleData.meta_description || '';
         if (rawMeta.length <= 160) {
