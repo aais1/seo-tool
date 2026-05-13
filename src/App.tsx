@@ -195,6 +195,7 @@ interface CompetitorData {
     readabilityLevel?: string;
   };
   headings?: HeadingItem[];
+  sections?: { level: string; heading: string; paragraphs: string[] }[];
 }
 
 // --- Types ---
@@ -396,7 +397,7 @@ export default function App() {
     throw new Error(JSON.stringify(errInfo));
   };
   const [competitorUrls, setCompetitorUrls] = useState<string[]>(['']);
-  const [focusKeyword, setFocusKeyword] = useState('');
+  const [focusKeyword_state, setFocusKeyword] = useState('');
   const [blueprints, setBlueprints] = useState<WritingBlueprint[]>([]);
   const [activeBlueprint, setActiveBlueprint] = useState<string | null>(null);
   const [blueprintName, setBlueprintName] = useState('');
@@ -873,7 +874,13 @@ export default function App() {
           if (data.imagePlacement === undefined) {
             data.imagePlacement = 'after-h2';
           }
-          setSettings(data);
+          // Restore sensitive keys from localStorage (never stored in Firestore)
+          const localKeys = JSON.parse(localStorage.getItem('ws_sensitive_keys') || '{}');
+          setSettings({ ...data, ...localKeys });
+        } else {
+          // No Firestore doc — still restore sensitive keys
+          const localKeys = JSON.parse(localStorage.getItem('ws_sensitive_keys') || '{}');
+          if (Object.keys(localKeys).length > 0) setSettings(prev => ({ ...prev, ...localKeys }));
         }
       } catch (e) {
         handleFirestoreError(e, OperationType.GET, `settings/${uid}`);
@@ -933,13 +940,14 @@ export default function App() {
   const handleSaveSettings = async () => {
     if (!user) return;
     try {
-      // Issue 5: Strip sensitive keys before saving to cloud
       const { geminiKey, openaiKey, anthropicKey, wpAppPassword, ...safeSettings } = settings;
+      // Save sensitive keys to localStorage so they survive page reloads
+      localStorage.setItem('ws_sensitive_keys', JSON.stringify({ geminiKey, openaiKey, anthropicKey, wpAppPassword }));
       await setDoc(doc(db, 'settings', user.uid), {
         ...safeSettings,
         updatedAt: serverTimestamp()
       });
-      showNotification("Settings saved (sensitive keys kept in local session only).");
+      showNotification("Settings saved.");
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `settings/${user.uid}`);
     }
@@ -2099,9 +2107,14 @@ OUTPUT RULE:
       showNotification("Executing SEO Analysis Protocol...", "success");
       
       const lsiTerms = settings.lsiKeywords ? Array.from(new Set(dataToUse.flatMap(c => c.lsiKeywords || []))).slice(0, 30).join(', ') : 'Relevant industry terms';
-      const focusKeyword = settings.sopKeywords[0] || 'Target Topic';
+      // Resolve focus keyword: UI state → settings (if not placeholder) → scraped title → fallback
+      const settingsKeyword = settings.sopKeywords[0] || '';
+      const isPlaceholder = !settingsKeyword || settingsKeyword.toLowerCase() === 'focus keyword';
+      const titleDerived = dataToUse[0]?.title?.replace(/[-|].*$/, '').trim() || '';
+      const focusKeyword = focusKeyword_state || (!isPlaceholder ? settingsKeyword : '') || dataToUse[0]?.query || titleDerived || 'Target Topic';
+      console.log('[GENERATE] Focus keyword resolved:', focusKeyword, '| from state:', focusKeyword_state, '| from settings:', settingsKeyword, '| from title:', titleDerived);
 
-      // Extract exact headings from the scraped article (first competitor with headings, skip H1)
+      // Extract exact headings and structured sections from the scraped article
       const primaryCompetitor = dataToUse.find(c => c.headings && c.headings.length > 0) || dataToUse[0];
       const junkHeadingPattern = /^(share|like what|follow|subscribe|in this blog|newsletter|cookie|privacy|menu|nav|sidebar|related|tags|categories|comments|leave a reply|about the author|recent posts|popular posts|advertisement|sign up|log in|get in touch|contact|back to top|table of contents)/i;
       const scrapedHeadings = (primaryCompetitor?.headings || [])
@@ -2115,6 +2128,23 @@ OUTPUT RULE:
       const scrapedHeadingList = scrapedHeadings.length > 0
         ? scrapedHeadings.join('\n        ')
         : null;
+
+      // Build structured section content rules from scraped sections
+      const rawSections = (primaryCompetitor?.sections || []).filter(s =>
+        s.level !== 'h1' &&
+        s.heading?.trim().length >= 10 &&
+        !junkHeadingPattern.test(s.heading.trim()) &&
+        s.paragraphs.length > 0
+      );
+      const scrapedSectionRules = rawSections.length > 0
+        ? rawSections.map(s =>
+            `${s.level.toUpperCase()}: ${s.heading.trim()}\n` +
+            s.paragraphs.slice(0, 3).map((p, i) => `  KEY POINT ${i + 1}: ${p.substring(0, 200)}`).join('\n')
+          ).join('\n\n')
+        : null;
+
+      console.log('[GENERATE] Scraped headings count:', scrapedHeadings.length);
+      console.log('[GENERATE] Scraped sections with content:', rawSections.length);
 
       const competitorDataChunks = dataToUse.map(c => `
 --- START COMPETITOR URL: ${c.url} ---
@@ -2345,10 +2375,16 @@ OUTPUT: Return ONLY JSON. No preamble.`
         ${enhancedContext}
         ARTICLE TITLE: ${result.title}
 
-        GOAL: Generate a persuasive introduction following your system instruction writing directive exactly.
+        GOAL: Generate a persuasive 2-3 paragraph introduction following your system instruction writing directive exactly.
 
         MANDATORY INJECTION RULE: The exact phrase "${focusKeyword}" MUST appear in sentence 1 or sentence 2 — not later. This is non-negotiable and overrides all other style guidance.
-        RETURN JSON: { "introduction": "HTML formatted content here" }
+
+        FORMATTING — CRITICAL:
+        - Every paragraph MUST be wrapped in <p>...</p> tags. No bare text outside tags.
+        - Use <strong>...</strong> for emphasis — never markdown **bold**.
+        - Do NOT include any headings in the introduction.
+        - Return ONLY the HTML paragraphs. No preamble.
+        RETURN JSON: { "introduction": "<p>...</p><p>...</p>" }
       `, sopModels.introduction, introSystemPrompt);
       
       if (introData) {
@@ -2379,26 +2415,38 @@ OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>,
         MANDATORY HEADING STRUCTURE — these are the EXACT headings scraped from the source article. You MUST use every heading below word-for-word, in this exact order, at the exact level shown. No rewording, no reordering, no additions, no omissions:
         ${scrapedHeadingList || strategyData?.outline?.join('\n        ') || 'Follow competitor heading patterns'}
 
+        ${scrapedSectionRules ? `MANDATORY CONTENT COVERAGE — for each section below, you MUST cover the key points listed. These are the exact talking points from the source article and are non-negotiable. Write them originally in your own words but ensure every point is addressed:
+        ${scrapedSectionRules}` : ''}
+
         MANDATORY CONSTRAINTS:
         - Apply the system instruction writing directives to every section — this is non-negotiable.
         - Begin output with the first H2 tag. No preamble, no repeated introduction.
-        - Write completely original, deeply thorough paragraphs under each heading.
+        - Every section MUST have at least 2-3 substantial <p> paragraphs of original content — never leave a heading with only a list and no paragraphs.
+        - Every list item (<li>) that mentions a concept MUST be preceded or followed by a <p> explaining that concept in depth.
         - Do NOT add any headings beyond those in the MANDATORY HEADING STRUCTURE list. Every heading tag in your output must match exactly one entry from that list. No H4, H5, H6, or any invented sub-headings.
         - NEVER mention the words "Directive", "Rule", "SOP", or "Competitor" in the article text.
         - NEVER use placeholders like "{focus_keyword}". Use "${focusKeyword}" instead.
         - TARGET: Aim for ${settings.targetWordCount} words of depth.
         - OPTIMIZATION: Natural ${focusKeyword} density 1-2%.
 
-        FORMATTING: Return article body HTML only (H2, H3, P, UL, OL, LI). Do NOT wrap in <!DOCTYPE>, <html>, <head>, or <body> tags. Return within:
-        { "content": "..." }
+        FORMATTING — CRITICAL:
+        - Return article body HTML only (H2, H3, P, UL, OL, LI tags ONLY).
+        - Every paragraph of prose MUST be wrapped in <p>...</p> tags — NO bare text outside of tags.
+        - Lists must use <ul><li>item</li></ul> or <ol><li>item</li></ol> — never bare hyphens or asterisks.
+        - Do NOT wrap output in <!DOCTYPE>, <html>, <head>, or <body> tags.
+        - Return within: { "content": "..." }
       `;
       const contentData = await callStep('Content', contentPrompt, sopModels.content, contentSystemPrompt);
       
       if (contentData) {
-        const rawContent = contentData.content || (typeof contentData === 'string' ? contentData : '');
-        // Strip model-invented placeholder spans e.g. <span class="focus-keyword">focus keyword</span>
-        result.content = rawContent.replace(/<span[^>]*class=["'][^"']*(?:focus-keyword|lsi)[^"']*["'][^>]*>(.*?)<\/span>/gi, '$1');
-        // Skipping multiple content image generation per user request
+        let rawContent = contentData.content || (typeof contentData === 'string' ? contentData : '');
+        // Strip model-invented placeholder spans
+        rawContent = rawContent.replace(/<span[^>]*class=["'][^"']*(?:focus-keyword|lsi)[^"']*["'][^>]*>(.*?)<\/span>/gi, '$1');
+        // Strip any accidental <!DOCTYPE>, <html>, <head>, <body> wrappers the model may have added
+        rawContent = rawContent.replace(/<!DOCTYPE[^>]*>/gi, '').replace(/<\/?html[^>]*>/gi, '').replace(/<\/?head[^>]*>[\s\S]*?<\/head>/gi, '').replace(/<\/?body[^>]*>/gi, '');
+        // Ensure bare text runs outside tags get wrapped in <p>
+        rawContent = rawContent.replace(/^([^<\n][^\n]{30,})\n/gm, '<p>$1</p>\n');
+        result.content = rawContent.trim();
         result.contentImages = [];
       }
 
@@ -2583,12 +2631,26 @@ OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>,
       setPublishProgress(25);
       console.log("[CLIENT] Sending POST to /api/wordpress/publish...");
 
-      const postContent = `
-              ${blogDraft.introduction || ''}
-              ${blogDraft.content || ''}
-              ${blogDraft.faq && blogDraft.faq.length > 0 ? `<h2>Frequently Asked Questions</h2>${blogDraft.faq.map(f => `<h3>${f.question}</h3><p>${f.answer}</p>`).join('')}` : ''}
-              ${blogDraft.conclusion || ''}
-            `;
+      // Use raw HTML fields — the non-raw fields are stripped plain text for internal use only
+      const faqHtml = blogDraft.faq && blogDraft.faq.length > 0
+        ? `<h2>Frequently Asked Questions</h2>${blogDraft.faq.map((f: any) => `<h3>${f.question}</h3>${f.answer}`).join('')}`
+        : '';
+
+      const postContent = `${blogDraft.rawIntroduction || blogDraft.introduction || ''}
+${blogDraft.rawContent || blogDraft.content || ''}
+${faqHtml}
+${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
+
+      console.log("[CLIENT] ───── INTRODUCTION HTML ─────");
+      console.log(blogDraft.rawIntroduction || blogDraft.introduction || '(empty)');
+      console.log("[CLIENT] ───── CONTENT HTML ─────");
+      console.log(blogDraft.rawContent || blogDraft.content || '(empty)');
+      console.log("[CLIENT] ───── FAQ HTML ─────");
+      console.log(faqHtml || '(empty)');
+      console.log("[CLIENT] ───── CONCLUSION HTML ─────");
+      console.log(blogDraft.rawConclusion || blogDraft.conclusion || '(empty)');
+      console.log("[CLIENT] ───── FULL PAYLOAD HTML ─────");
+      console.log(postContent);
       console.log("[CLIENT] Total content payload length:", postContent.length, "chars");
 
       const res = await fetch('/api/wordpress/publish', {
@@ -2921,6 +2983,23 @@ OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>,
                 )}>
                   <h3 className="text-xs font-black uppercase tracking-[0.2em] text-slate-500 mb-6">Content Intelligence Protocol</h3>
                   <div className="space-y-6">
+                    {/* Focus Keyword Input */}
+                    <div className="relative">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 block mb-2">Focus Keyword</label>
+                      <div className="relative">
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-500" />
+                        <input
+                          type="text"
+                          placeholder="e.g. food puns for restaurants"
+                          className={cn(
+                            "w-full border-2 rounded-lg py-3 pl-12 pr-4 text-[11px] focus:outline-none focus:border-indigo-500 transition-all font-mono",
+                            settings.theme === 'dark' ? "bg-slate-900 border-slate-800 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"
+                          )}
+                          value={focusKeyword_state}
+                          onChange={(e) => setFocusKeyword(e.target.value)}
+                        />
+                      </div>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="relative space-y-4 col-span-full">
                         <div className="flex items-center justify-between">

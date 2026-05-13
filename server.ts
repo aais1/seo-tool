@@ -259,7 +259,25 @@ async function startServer() {
         }
       });
 
-      // Return the full scraping payload plus headings (no file writes)
+      // Structured sections: each heading paired with the paragraph/list content beneath it
+      const sections: { level: string; heading: string; paragraphs: string[] }[] = [];
+      let currentSection: { level: string; heading: string; paragraphs: string[] } | null = null;
+
+      bestContent.find('h1, h2, h3, h4, h5, h6, p, li, blockquote').each((_, el) => {
+        const tag = el.tagName ? el.tagName.toLowerCase() : (el.name || '').toLowerCase();
+        const text = $(el).text().trim().replace(/\s+/g, ' ');
+        if (!text || text.length < 15) return;
+
+        if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tag)) {
+          if (currentSection) sections.push(currentSection);
+          currentSection = { level: tag, heading: text, paragraphs: [] };
+        } else if (currentSection && text.length > 30) {
+          currentSection.paragraphs.push(text);
+        }
+      });
+      if (currentSection) sections.push(currentSection);
+
+      // Return the full scraping payload plus headings and structured sections
       res.json({
         url,
         wordCount,
@@ -268,7 +286,8 @@ async function startServer() {
         description,
         fullContent: bodyText,
         images: images.slice(0, 15),
-        headings
+        headings,
+        sections
       });
     } catch (error: any) {
       console.error(`[Scraper] Error ${url}:`, error.message);
