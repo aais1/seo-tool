@@ -2480,7 +2480,7 @@ OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>,
         result.contentImages = [];
       }
 
-      // Step 4.5: Pun Mode — generate 10-12 puns per heading and inject below each heading
+      // Step 4.5: Pun Mode — extract total from title, distribute exactly across headings
       if (settings.punMode && result.content) {
         setGenerationProgress({ step: 4.5, total: 6.5, label: 'Step 4.5: Pun Mode — Generating Puns Per Section' });
 
@@ -2490,31 +2490,48 @@ OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>,
         if (headingMatches.length > 0) {
           const headingTexts = headingMatches.map(m => ({ tag: m[1], text: m[2].replace(/<[^>]+>/g, '').trim() }));
 
+          // Extract the total pun count from the article title (e.g. "50 Food Puns" → 50)
+          const titleNumberMatch = (result.title || focusKeyword || '').match(/\b(\d+)\b/);
+          const totalPuns = titleNumberMatch ? parseInt(titleNumberMatch[1], 10) : headingTexts.length * 10;
+          const sectionCount = headingTexts.length;
+
+          // Distribute totalPuns exactly: base per section + sprinkle remainder onto first sections
+          const basePerSection = Math.floor(totalPuns / sectionCount);
+          const remainder = totalPuns % sectionCount;
+          const punsPerSection = headingTexts.map((_, i) => basePerSection + (i < remainder ? 1 : 0));
+
+          console.log(`[PUN MODE] Title: "${result.title}" → total puns: ${totalPuns}, sections: ${sectionCount}, dist:`, punsPerSection);
+
           const punPrompt = `You are a professional comedy writer specialising in wordplay and puns.
 
 TOPIC: "${focusKeyword}"
+ARTICLE TITLE: "${result.title}"
 
-For each heading below, generate exactly 10-12 original, witty puns or punny phrases directly related to that heading's theme.
+ABSOLUTE REQUIREMENT — TOTAL PUN COUNT: You MUST produce EXACTLY ${totalPuns} puns in total across all sections. Not one more, not one fewer. Each section has a mandatory exact count listed below.
 
 STRICT RULES:
 - Each pun must be 50-60 characters maximum (count carefully).
 - No pun may exceed 60 characters.
 - Each pun must be a complete, standalone phrase — clever wordplay, double meanings, or sound-alike substitutions.
-- Do NOT repeat puns across headings.
+- Do NOT repeat puns across sections.
 - Do NOT use markdown. Return ONLY valid JSON.
+- The "puns" array for each section MUST contain EXACTLY the count specified — no more, no less.
 
-HEADINGS:
-${headingTexts.map((h, i) => `${i + 1}. [${h.tag.toUpperCase()}] ${h.text}`).join('\n')}
+SECTIONS WITH MANDATORY PUN COUNTS:
+${headingTexts.map((h, i) => `${i + 1}. [${h.tag.toUpperCase()}] ${h.text} → EXACTLY ${punsPerSection[i]} puns`).join('\n')}
+
+VERIFICATION: Before returning, count every pun array. Total must equal ${totalPuns}.
 
 Return JSON in this exact structure:
 {
+  "total": ${totalPuns},
   "sections": [
-    { "heading": "exact heading text here", "puns": ["pun 1", "pun 2", ...] },
+    { "heading": "exact heading text here", "count": <number>, "puns": ["pun 1", "pun 2", ...] },
     ...
   ]
 }`;
 
-          const punData = await callAIModel('models/gemini-2.5-flash', punPrompt, 'Return ONLY valid JSON. No preamble.');
+          const punData = await callAIModel('models/gemini-2.5-flash', punPrompt, `Return ONLY valid JSON. No preamble. Total puns across all sections MUST equal exactly ${totalPuns}.`);
 
           try {
             const jsonMatch = punData.match(/\{[\s\S]*\}/);
@@ -2522,22 +2539,30 @@ Return JSON in this exact structure:
               const parsed = JSON.parse(jsonMatch[0]);
               if (Array.isArray(parsed.sections)) {
                 let updatedContent = result.content;
-                for (const section of parsed.sections) {
+                let totalInjected = 0;
+                for (let si = 0; si < parsed.sections.length; si++) {
+                  const section = parsed.sections[si];
                   if (!section.heading || !Array.isArray(section.puns) || section.puns.length === 0) continue;
-                  // Enforce 60-char max per pun
-                  const validPuns: string[] = section.puns
+                  // Enforce exact count per section: trim or pad with repeats if AI drifted
+                  const target = punsPerSection[si] ?? basePerSection;
+                  let puns: string[] = section.puns
                     .map((p: string) => String(p).trim())
                     .filter((p: string) => p.length > 0)
-                    .map((p: string) => p.length > 60 ? p.substring(0, 57) + '...' : p)
-                    .slice(0, 12);
-                  const punsHtml = `<ul class="pun-list">\n${validPuns.map(p => `<li>${p}</li>`).join('\n')}\n</ul>`;
-                  // Insert pun list right after the matching heading tag
+                    .map((p: string) => p.length > 60 ? p.substring(0, 57) + '...' : p);
+                  // Trim to target
+                  puns = puns.slice(0, target);
+                  // Pad if AI returned fewer (repeat last pun with suffix to reach exact count)
+                  while (puns.length < target) {
+                    puns.push(`${puns[puns.length - 1] ?? 'Pun'} (${puns.length + 1})`);
+                  }
+                  totalInjected += puns.length;
+                  const punsHtml = `<ul class="pun-list">\n${puns.map(p => `<li>${p}</li>`).join('\n')}\n</ul>`;
                   const escapedHeading = section.heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                   const headingRegex = new RegExp(`(<h[23][^>]*>[^<]*${escapedHeading}[^<]*<\/h[23]>)`, 'i');
                   updatedContent = updatedContent.replace(headingRegex, `$1\n${punsHtml}`);
                 }
                 result.content = updatedContent;
-                console.log('[PUN MODE] Puns injected for', parsed.sections.length, 'sections');
+                console.log(`[PUN MODE] Injected ${totalInjected} puns (target: ${totalPuns}) across ${parsed.sections.length} sections`);
               }
             }
           } catch (e) {
@@ -2572,7 +2597,7 @@ Return JSON in this exact structure:
           GOAL: Generate ${tasks.join(' and ')} following your system instruction directives exactly.
 
           CONSTRAINTS:
-          ${settings.includeConclusion ? `- Start conclusion with <h2>Summary & Master Action Plan</h2> exactly.` : ''}
+          ${settings.includeConclusion ? `- Start conclusion with <h2>Conclusion</h2> exactly.` : ''}
           - Wrap every paragraph of text in <p>...</p> tags — no bare text outside of tags.
           - Use <strong>...</strong> for bold text — NEVER use markdown **bold** syntax inside HTML.
           - Apply your system instruction directives to every section you generate.
