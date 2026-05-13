@@ -3496,13 +3496,7 @@ ${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
                       </div>
                     )}
                     <div className="flex flex-col items-center gap-3">
-                      {settings.punMode && !isGenerating && (
-                        <div className="flex items-center gap-2 px-4 py-1.5 bg-amber-500/10 border border-amber-500/30 rounded-full">
-                          <span className="text-sm">🥁</span>
-                          <span className="text-[9px] font-black uppercase tracking-widest text-amber-400">Pun Mode Active — puns will be generated per heading</span>
-                        </div>
-                      )}
-                      <div className="flex justify-center gap-4">
+                      <div className="flex items-center justify-center gap-3 flex-wrap">
                         {isGenerating ? (
                           <button
                             onClick={handleCancelGeneration}
@@ -3512,14 +3506,29 @@ ${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
                             Abort Protocol
                           </button>
                         ) : (
-                          <button
-                            onClick={() => handleGenerate()}
-                            disabled={isGenerating}
-                            className="px-12 py-4 bg-indigo-600 text-white border-2 border-indigo-600 rounded-lg text-base font-black uppercase tracking-widest flex items-center gap-4 hover:bg-indigo-700 active:scale-95 transition-all shadow-none"
-                          >
-                            <Zap className="w-5 h-5" />
-                            Generate Optimized Article
-                          </button>
+                          <>
+                            <button
+                              onClick={() => handleGenerate()}
+                              disabled={isGenerating}
+                              className="px-12 py-4 bg-indigo-600 text-white border-2 border-indigo-600 rounded-lg text-base font-black uppercase tracking-widest flex items-center gap-4 hover:bg-indigo-700 active:scale-95 transition-all shadow-none"
+                            >
+                              <Zap className="w-5 h-5" />
+                              Generate Optimized Article
+                            </button>
+                            <button
+                              onClick={() => setSettings(s => ({ ...s, punMode: !s.punMode }))}
+                              title="Toggle Pun Mode: generates 10-12 puns per heading"
+                              className={cn(
+                                "px-5 py-4 rounded-lg border-2 text-base font-black uppercase tracking-widest flex items-center gap-2 transition-all active:scale-95 shadow-none",
+                                settings.punMode
+                                  ? "bg-amber-500/20 border-amber-500 text-amber-400 hover:bg-amber-500/30"
+                                  : "bg-slate-900 border-slate-700 text-slate-500 hover:border-slate-600"
+                              )}
+                            >
+                              <span>🥁</span>
+                              <span className="text-[10px]">{settings.punMode ? 'Pun On' : 'Pun Off'}</span>
+                            </button>
+                          </>
                         )}
                       </div>
                     </div>
@@ -5129,26 +5138,6 @@ ${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
                       </button>
                     </div>
 
-                    <div className="space-y-4">
-                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Pun Mode</label>
-                      <button
-                        onClick={() => setSettings({...settings, punMode: !settings.punMode})}
-                        className={cn(
-                          "w-full py-3.5 rounded-lg border-2 font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all",
-                          settings.punMode
-                            ? "bg-amber-500/10 border-amber-500/40 text-amber-400"
-                            : "bg-slate-900 border-slate-800 text-slate-500 grayscale"
-                        )}
-                      >
-                        <span className={cn("text-base leading-none", settings.punMode && "animate-pulse")}>🥁</span>
-                        {settings.punMode ? 'Pun Mode: ON — 10-12 puns per heading' : 'Pun Mode: OFF'}
-                      </button>
-                      {settings.punMode && (
-                        <p className="text-[9px] text-amber-500/70 uppercase tracking-widest px-1">
-                          Generates 10-12 puns (max 60 chars) below every H2/H3 heading
-                        </p>
-                      )}
-                    </div>
 
                     <div className="space-y-4">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Visual Anchoring</label>
