@@ -874,11 +874,11 @@ export default function App() {
           if (data.imagePlacement === undefined) {
             data.imagePlacement = 'after-h2';
           }
-          // Restore sensitive keys from localStorage (never stored in Firestore)
+          // wpAppPassword is now in Firestore; API keys are localStorage-only
           const localKeys = JSON.parse(localStorage.getItem('ws_sensitive_keys') || '{}');
           setSettings({ ...data, ...localKeys });
         } else {
-          // No Firestore doc — still restore sensitive keys
+          // No Firestore doc — restore any locally saved keys
           const localKeys = JSON.parse(localStorage.getItem('ws_sensitive_keys') || '{}');
           if (Object.keys(localKeys).length > 0) setSettings(prev => ({ ...prev, ...localKeys }));
         }
@@ -940,9 +940,9 @@ export default function App() {
   const handleSaveSettings = async () => {
     if (!user) return;
     try {
-      const { geminiKey, openaiKey, anthropicKey, wpAppPassword, ...safeSettings } = settings;
-      // Save sensitive keys to localStorage so they survive page reloads
-      localStorage.setItem('ws_sensitive_keys', JSON.stringify({ geminiKey, openaiKey, anthropicKey, wpAppPassword }));
+      const { geminiKey, openaiKey, anthropicKey, ...safeSettings } = settings;
+      // Keep API keys only in localStorage; wpAppPassword is saved to Firestore
+      localStorage.setItem('ws_sensitive_keys', JSON.stringify({ geminiKey, openaiKey, anthropicKey, wpAppPassword: settings.wpAppPassword }));
       await setDoc(doc(db, 'settings', user.uid), {
         ...safeSettings,
         updatedAt: serverTimestamp()
