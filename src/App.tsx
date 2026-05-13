@@ -1921,7 +1921,8 @@ OUTPUT RULE:
                     description: data.description || '',
                     fullContent: data.fullContent || '',
                     images: data.images || [],
-                    headings: data.headings || []
+                    headings: data.headings || [],
+                    sections: data.sections || []
                   };
                   addResearchLog(`Node ingested: ${minimal.title} (headings: ${minimal.headings.length})`, 'success');
                   // Update UI immediately without analysis or Firestore saves
@@ -1939,6 +1940,7 @@ OUTPUT RULE:
                   fullContent: data.fullContent || '',
                   images: data.images || [],
                   headings: data.headings || [],
+                  sections: data.sections || [],
                   lsiKeywords: data.lsiKeywords || []
                 };
 
@@ -2110,7 +2112,8 @@ OUTPUT RULE:
       // Resolve focus keyword: UI state → settings (if not placeholder) → scraped title → fallback
       const settingsKeyword = settings.sopKeywords[0] || '';
       const isPlaceholder = !settingsKeyword || settingsKeyword.toLowerCase() === 'focus keyword';
-      const titleDerived = dataToUse[0]?.title?.replace(/[-|].*$/, '').trim() || '';
+      const rawTitle = dataToUse[0]?.title?.replace(/[-|].*$/, '').trim() || '';
+      const titleDerived = rawTitle.split(/\s+/).slice(0, 5).join(' ');
       const focusKeyword = focusKeyword_state || (!isPlaceholder ? settingsKeyword : '') || dataToUse[0]?.query || titleDerived || 'Target Topic';
       console.log('[GENERATE] Focus keyword resolved:', focusKeyword, '| from state:', focusKeyword_state, '| from settings:', settingsKeyword, '| from title:', titleDerived);
 
