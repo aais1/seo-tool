@@ -2101,6 +2101,21 @@ OUTPUT RULE:
       const lsiTerms = settings.lsiKeywords ? Array.from(new Set(dataToUse.flatMap(c => c.lsiKeywords || []))).slice(0, 30).join(', ') : 'Relevant industry terms';
       const focusKeyword = settings.sopKeywords[0] || 'Target Topic';
 
+      // Extract exact headings from the scraped article (first competitor with headings, skip H1)
+      const primaryCompetitor = dataToUse.find(c => c.headings && c.headings.length > 0) || dataToUse[0];
+      const junkHeadingPattern = /^(share|like what|follow|subscribe|in this blog|newsletter|cookie|privacy|menu|nav|sidebar|related|tags|categories|comments|leave a reply|about the author|recent posts|popular posts|advertisement|sign up|log in|get in touch|contact|back to top|table of contents)/i;
+      const scrapedHeadings = (primaryCompetitor?.headings || [])
+        .filter(h =>
+          h.level !== 'h1' &&
+          h.text?.trim() &&
+          h.text.trim().length >= 10 &&
+          !junkHeadingPattern.test(h.text.trim())
+        )
+        .map(h => `${h.level.toUpperCase()}: ${h.text.trim()}`);
+      const scrapedHeadingList = scrapedHeadings.length > 0
+        ? scrapedHeadings.join('\n        ')
+        : null;
+
       const competitorDataChunks = dataToUse.map(c => `
 --- START COMPETITOR URL: ${c.url} ---
 TITLE: ${c.title}
@@ -2251,18 +2266,19 @@ ${c.fullContent?.substring(0, 10000) || 'No content fetched'}
 
       const strategyPrompt = `
         ${sharedContext}
-        TASK: Based on the competitor headings and content details, create a "Master Content Blueprint".
+        TASK: Create a "Master Content Blueprint" to rewrite the source article under its exact headings.
         FOCUS KEYWORD: ${focusKeyword}
         LSI KEYWORDS: ${lsiTerms}
+        ${scrapedHeadingList ? `\n        EXACT HEADINGS FROM SOURCE ARTICLE (these are locked — the content will be rewritten under each of these headings exactly):\n        ${scrapedHeadingList}` : ''}
 
-        OBJECTIVE: You MUST extract and use the same headings (H2/H3) found in the top competitor data. Our structure must mirror the high-ranking patterns while improving the depth of information under each heading.
-        
+        OBJECTIVE: Define the strategic angle and LSI plan for rewriting deeply authoritative content under the source article's exact headings above.
+
         Identify:
-        1. The specific competitor headings we are adopting to ensure structural parity with the SERP leaders.
-        2. A structured plan for heading hierarchy (H2/H3) that REPLICATES these successful patterns and integrates LSI keywords.
-        3. A plan to cross-reference competitor facts while adding our unique "Angle" to outperform them.
-        
-        RETURN JSON: { "strategic_angle": "...", "outline": ["H2: [Exact Competitor Heading]", "H3: [Adopted Sub-heading]", "H2: ..."], "lsi_plan": "..." }
+        1. A strategic angle that fills gaps in the source article while keeping the same heading structure.
+        2. A plan to cross-reference source facts while expanding depth under each heading.
+        3. Which LSI keywords to weave into each section.
+
+        RETURN JSON: { "strategic_angle": "...", "outline": ${scrapedHeadingList ? JSON.stringify(scrapedHeadings) : '["H2: ...", "H3: ..."]'}, "lsi_plan": "..." }
       `;
       
       const strategyData = await callStep('Strategy', strategyPrompt, settings.aiModel, "Return ONLY valid JSON. Master Blueprinting Phase.");
@@ -2304,9 +2320,13 @@ OUTPUT: Return ONLY valid JSON. Zero conversational filler.`
         result.title = titleData.title || titleData;
         result.meta_title = (titleData.meta_title || '').substring(0, 60).replace(/\s\S*$/, '');
         const rawMeta = titleData.meta_description || '';
-        result.meta_description = rawMeta.length > 162
-          ? rawMeta.substring(0, 157).replace(/\s\S*$/, '...').trimEnd()
-          : rawMeta;
+        if (rawMeta.length <= 160) {
+          result.meta_description = rawMeta;
+        } else {
+          // Cut at last word boundary before 160 chars and close with a period
+          const cut = rawMeta.substring(0, 160).replace(/\s\S*$/, '').trimEnd();
+          result.meta_description = /[.!?]$/.test(cut) ? cut : cut + '.';
+        }
         result.featured_image_prompt = titleData.featured_image_prompt || '';
       }
 
@@ -2356,13 +2376,14 @@ OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>,
 
         YOUR ROLE: Your system instructions define HOW to write (style, structure, keyword usage). The heading list below defines WHAT structure to follow. These two are complementary — apply your writing directive to every paragraph under every heading listed.
 
-        MANDATORY HEADING STRUCTURE (use every heading exactly as written — no changes, no omissions, no additions):
-        ${strategyData?.outline?.join('\n        ') || 'Follow competitor heading patterns'}
+        MANDATORY HEADING STRUCTURE — these are the EXACT headings scraped from the source article. You MUST use every heading below word-for-word, in this exact order, at the exact level shown. No rewording, no reordering, no additions, no omissions:
+        ${scrapedHeadingList || strategyData?.outline?.join('\n        ') || 'Follow competitor heading patterns'}
 
         MANDATORY CONSTRAINTS:
         - Apply the system instruction writing directives to every section — this is non-negotiable.
         - Begin output with the first H2 tag. No preamble, no repeated introduction.
         - Write completely original, deeply thorough paragraphs under each heading.
+        - Do NOT add any headings beyond those in the MANDATORY HEADING STRUCTURE list. Every heading tag in your output must match exactly one entry from that list. No H4, H5, H6, or any invented sub-headings.
         - NEVER mention the words "Directive", "Rule", "SOP", or "Competitor" in the article text.
         - NEVER use placeholders like "{focus_keyword}". Use "${focusKeyword}" instead.
         - TARGET: Aim for ${settings.targetWordCount} words of depth.
@@ -5795,14 +5816,20 @@ function PreviewModal({ blogDraft, onClose, theme }: { blogDraft: BlogPost, onCl
 
     // Minimal inline styling to approximate site render (prose-like)
     const style = `
-      body{font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:${theme === 'dark' ? '#0f172a' : '#ffffff'}; color:${theme === 'dark' ? '#e6edf3' : '#0f172a'}; padding:40px;}
+      *{box-sizing:border-box}
+      body{font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:${theme === 'dark' ? '#0f172a' : '#ffffff'}; color:${theme === 'dark' ? '#e6edf3' : '#0f172a'}; padding:40px; font-size:18px; line-height:1.8;}
       .container{max-width:900px;margin:0 auto}
-      .prose{line-height:1.8;font-size:18px}
-      h1{font-size:40px;margin:0 0 20px}
-      h2{font-size:28px;margin:28px 0 12px}
-      p{margin:12px 0}
-      img{max-width:100%}
-      figure{margin:0}
+      h1{font-size:2.5rem;font-weight:800;letter-spacing:-0.03em;line-height:1.1;margin:0 0 1.5rem}
+      h2{font-size:1.75rem;font-weight:800;letter-spacing:-0.02em;line-height:1.2;margin:2.5rem 0 1rem;padding-bottom:0.5rem;border-bottom:2px solid ${theme === 'dark' ? 'rgba(99,102,241,0.3)' : 'rgba(99,102,241,0.2)'}}
+      h3{font-size:1.35rem;font-weight:700;letter-spacing:-0.01em;line-height:1.3;margin:2rem 0 0.75rem;color:${theme === 'dark' ? 'rgb(129,140,248)' : 'rgb(79,70,229)'}}
+      h4{font-size:1.1rem;font-weight:700;margin:1.5rem 0 0.5rem;color:${theme === 'dark' ? 'rgb(165,180,252)' : 'rgb(99,102,241)'}}
+      p{margin:0 0 1.25rem}
+      ul,ol{padding-left:1.5rem;margin:0 0 1.25rem}
+      li{margin-bottom:0.5rem}
+      a{color:${theme === 'dark' ? 'rgb(129,140,248)' : 'rgb(79,70,229)'};text-decoration:underline}
+      strong{font-weight:700}
+      img{max-width:100%;height:auto;border-radius:12px}
+      figure{margin:0 0 2rem}
     `;
 
     return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><meta name="description" content="${meta}"><meta name="viewport" content="width=device-width,initial-scale=1"/><style>${style}</style></head><body><div class="container"><article class="prose">${featured}${intro}${content}${conclusion}</article></div></body></html>`;
@@ -5911,12 +5938,12 @@ function PreviewModal({ blogDraft, onClose, theme }: { blogDraft: BlogPost, onCl
                 </div>
               )}
 
-              <div 
+              <div
                 className={cn(
-                  "p-10 border-4 border-dashed rounded-2xl",
+                  "blog-content p-10 border-4 border-dashed rounded-2xl",
                   theme === 'dark' ? "bg-slate-900/50 border-slate-800" : "bg-slate-50 border-slate-200"
                 )}
-                dangerouslySetInnerHTML={{ __html: (blogDraft as any).rawConclusion || blogDraft.conclusion }} 
+                dangerouslySetInnerHTML={{ __html: (blogDraft as any).rawConclusion || blogDraft.conclusion }}
               />
             </div>
           </article>

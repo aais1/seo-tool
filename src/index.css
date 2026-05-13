@@ -55,3 +55,54 @@
 .quill-editor p {
   @apply mb-4 leading-relaxed;
 }
+
+/* Blog content heading styles — applied wherever rawContent/rawConclusion is rendered */
+.blog-content h1,
+.blog-content h2,
+.blog-content h3,
+.blog-content h4,
+.blog-content h5,
+.blog-content h6 {
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+.blog-content h2 {
+  font-size: 1.75rem;
+  margin-top: 2.5rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid rgba(99, 102, 241, 0.3);
+}
+.blog-content h3 {
+  font-size: 1.35rem;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  color: rgb(129, 140, 248);
+}
+.blog-content h4 {
+  font-size: 1.1rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  color: rgb(165, 180, 252);
+}
+.blog-content p {
+  margin-bottom: 1.25rem;
+  line-height: 1.8;
+}
+.blog-content ul,
+.blog-content ol {
+  padding-left: 1.5rem;
+  margin-bottom: 1.25rem;
+}
+.blog-content li {
+  margin-bottom: 0.5rem;
+  line-height: 1.7;
+}
+.blog-content a {
+  color: rgb(129, 140, 248);
+  text-decoration: underline;
+}
+.blog-content strong {
+  font-weight: 700;
+}
