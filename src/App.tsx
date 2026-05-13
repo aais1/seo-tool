@@ -276,6 +276,7 @@ interface AppSettings {
   sopKeywords: string[];
   includeFaqs: boolean;
   includeConclusion: boolean;
+  punMode: boolean;
   imagePlacement: 'random' | 'after-h2' | 'after-h3';
   lsiKeywords: boolean;
   targetWordCount: number;
@@ -526,6 +527,7 @@ export default function App() {
     sopKeywords: ['focus keyword', 'internal link', 'external link'],
     includeFaqs: true,
     includeConclusion: true,
+    punMode: false,
     imagePlacement: 'after-h2',
     lsiKeywords: true,
     targetWordCount: 1200,
@@ -2453,6 +2455,72 @@ OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>,
         result.contentImages = [];
       }
 
+      // Step 4.5: Pun Mode — generate 10-12 puns per heading and inject below each heading
+      if (settings.punMode && result.content) {
+        setGenerationProgress({ step: 4.5, total: 6.5, label: 'Step 4.5: Pun Mode — Generating Puns Per Section' });
+
+        // Extract all H2/H3 headings from content
+        const headingMatches = [...result.content.matchAll(/<(h[23])[^>]*>(.*?)<\/h[23]>/gi)];
+
+        if (headingMatches.length > 0) {
+          const headingTexts = headingMatches.map(m => ({ tag: m[1], text: m[2].replace(/<[^>]+>/g, '').trim() }));
+
+          const punPrompt = `You are a professional comedy writer specialising in wordplay and puns.
+
+TOPIC: "${focusKeyword}"
+
+For each heading below, generate exactly 10-12 original, witty puns or punny phrases directly related to that heading's theme.
+
+STRICT RULES:
+- Each pun must be 50-60 characters maximum (count carefully).
+- No pun may exceed 60 characters.
+- Each pun must be a complete, standalone phrase — clever wordplay, double meanings, or sound-alike substitutions.
+- Do NOT repeat puns across headings.
+- Do NOT use markdown. Return ONLY valid JSON.
+
+HEADINGS:
+${headingTexts.map((h, i) => `${i + 1}. [${h.tag.toUpperCase()}] ${h.text}`).join('\n')}
+
+Return JSON in this exact structure:
+{
+  "sections": [
+    { "heading": "exact heading text here", "puns": ["pun 1", "pun 2", ...] },
+    ...
+  ]
+}`;
+
+          const punData = await callAIModel('models/gemini-2.5-flash', punPrompt, 'Return ONLY valid JSON. No preamble.');
+
+          try {
+            const jsonMatch = punData.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]);
+              if (Array.isArray(parsed.sections)) {
+                let updatedContent = result.content;
+                for (const section of parsed.sections) {
+                  if (!section.heading || !Array.isArray(section.puns) || section.puns.length === 0) continue;
+                  // Enforce 60-char max per pun
+                  const validPuns: string[] = section.puns
+                    .map((p: string) => String(p).trim())
+                    .filter((p: string) => p.length > 0)
+                    .map((p: string) => p.length > 60 ? p.substring(0, 57) + '...' : p)
+                    .slice(0, 12);
+                  const punsHtml = `<ul class="pun-list">\n${validPuns.map(p => `<li>${p}</li>`).join('\n')}\n</ul>`;
+                  // Insert pun list right after the matching heading tag
+                  const escapedHeading = section.heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  const headingRegex = new RegExp(`(<h[23][^>]*>[^<]*${escapedHeading}[^<]*<\/h[23]>)`, 'i');
+                  updatedContent = updatedContent.replace(headingRegex, `$1\n${punsHtml}`);
+                }
+                result.content = updatedContent;
+                console.log('[PUN MODE] Puns injected for', parsed.sections.length, 'sections');
+              }
+            }
+          } catch (e) {
+            console.warn('[PUN MODE] Failed to parse pun response, skipping', e);
+          }
+        }
+      }
+
       // Step 5: FAQ & Conclusion
       if (settings.includeFaqs || settings.includeConclusion) {
         setGenerationProgress({ step: 5, total: 6.5, label: `Step 5: ${[settings.includeFaqs && 'FAQ', settings.includeConclusion && 'Conclusion'].filter(Boolean).join(' & ')} Generation` });
@@ -3427,25 +3495,33 @@ ${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
                          </div>
                       </div>
                     )}
-                    <div className="flex justify-center gap-4">
-                      {isGenerating ? (
-                        <button 
-                          onClick={handleCancelGeneration}
-                          className="px-12 py-4 bg-red-600 text-white border-2 border-red-600 rounded-lg text-base font-black uppercase tracking-widest flex items-center gap-4 hover:bg-red-700 transition-all shadow-none"
-                        >
-                          <X className="w-5 h-5" />
-                          Abort Protocol
-                        </button>
-                      ) : (
-                        <button 
-                          onClick={() => handleGenerate()}
-                          disabled={isGenerating}
-                          className="px-12 py-4 bg-indigo-600 text-white border-2 border-indigo-600 rounded-lg text-base font-black uppercase tracking-widest flex items-center gap-4 hover:bg-indigo-700 active:scale-95 transition-all shadow-none"
-                        >
-                          <Zap className="w-5 h-5" />
-                          Generate Optimized Article
-                        </button>
+                    <div className="flex flex-col items-center gap-3">
+                      {settings.punMode && !isGenerating && (
+                        <div className="flex items-center gap-2 px-4 py-1.5 bg-amber-500/10 border border-amber-500/30 rounded-full">
+                          <span className="text-sm">🥁</span>
+                          <span className="text-[9px] font-black uppercase tracking-widest text-amber-400">Pun Mode Active — puns will be generated per heading</span>
+                        </div>
                       )}
+                      <div className="flex justify-center gap-4">
+                        {isGenerating ? (
+                          <button
+                            onClick={handleCancelGeneration}
+                            className="px-12 py-4 bg-red-600 text-white border-2 border-red-600 rounded-lg text-base font-black uppercase tracking-widest flex items-center gap-4 hover:bg-red-700 transition-all shadow-none"
+                          >
+                            <X className="w-5 h-5" />
+                            Abort Protocol
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleGenerate()}
+                            disabled={isGenerating}
+                            className="px-12 py-4 bg-indigo-600 text-white border-2 border-indigo-600 rounded-lg text-base font-black uppercase tracking-widest flex items-center gap-4 hover:bg-indigo-700 active:scale-95 transition-all shadow-none"
+                          >
+                            <Zap className="w-5 h-5" />
+                            Generate Optimized Article
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -5039,18 +5115,39 @@ ${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
 
                     <div className="space-y-4">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Conclusion Logic</label>
-                      <button 
+                      <button
                         onClick={() => setSettings({...settings, includeConclusion: !settings.includeConclusion})}
                         className={cn(
                           "w-full py-3.5 rounded-lg border-2 font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all",
-                          settings.includeConclusion 
-                            ? "bg-indigo-600/10 border-indigo-600/40 text-indigo-400" 
+                          settings.includeConclusion
+                            ? "bg-indigo-600/10 border-indigo-600/40 text-indigo-400"
                             : "bg-slate-900 border-slate-800 text-slate-500 grayscale"
                         )}
                       >
                         <ShieldCheck className={cn("w-4 h-4", settings.includeConclusion && "animate-pulse")} />
                         {settings.includeConclusion ? 'Conclusion Active' : 'Conclusion Disabled'}
                       </button>
+                    </div>
+
+                    <div className="space-y-4">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Pun Mode</label>
+                      <button
+                        onClick={() => setSettings({...settings, punMode: !settings.punMode})}
+                        className={cn(
+                          "w-full py-3.5 rounded-lg border-2 font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all",
+                          settings.punMode
+                            ? "bg-amber-500/10 border-amber-500/40 text-amber-400"
+                            : "bg-slate-900 border-slate-800 text-slate-500 grayscale"
+                        )}
+                      >
+                        <span className={cn("text-base leading-none", settings.punMode && "animate-pulse")}>🥁</span>
+                        {settings.punMode ? 'Pun Mode: ON — 10-12 puns per heading' : 'Pun Mode: OFF'}
+                      </button>
+                      {settings.punMode && (
+                        <p className="text-[9px] text-amber-500/70 uppercase tracking-widest px-1">
+                          Generates 10-12 puns (max 60 chars) below every H2/H3 heading
+                        </p>
+                      )}
                     </div>
 
                     <div className="space-y-4">
