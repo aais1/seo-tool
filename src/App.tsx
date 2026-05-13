@@ -421,6 +421,9 @@ export default function App() {
     fullContent: ''
   });
 
+  const [editableHeadings, setEditableHeadings] = useState<HeadingItem[] | null>(null);
+  const [editableTitle, setEditableTitle] = useState<string>('');
+
   const addResearchLog = (message: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') => {
     setResearchLogs(prev => [{
       id: Math.random().toString(36).substring(7),
@@ -552,7 +555,7 @@ export default function App() {
       content: 'Identify critical content gaps (missing subtopics, weak explanations) found in competitor pages. Generate a comprehensive guide with H1, H2 and H3 headings that fills these gaps using the "Inverted Pyramid" style. Expand on concepts to meet the word count requirement while maintaining high topical density. Naturally weave these semantic LSI keywords to improve topical depth: {keywords}.',
       faq: 'Analyze search intent for "People Also Ask" triggers. Generate 5 high-intent FAQs that answer questions competitors ignore or answer superficially. Each answer must be concise and benefit-oriented.',
       metaDescription: 'Act as an expert SEO analyst. Generate a compelling meta description between 150-160 characters. Lead with a primary benefit, integrate "${focus_keyword}" naturally, and conclude with a high-conversion call-to-action.',
-      conclusion: 'Generate an <h2>Summary & Master Action Plan</h2> heading followed by 3-4 paragraphs. Summarize the unique value delivered and provide a "Mastery Checklist" of key takeaways. End with a compelling, high-urgency call-to-action.',
+      conclusion: 'Generate an <h2>Conclusion</h2> heading followed by 3-4 paragraphs. Summarize the unique value delivered and provide a "Mastery Checklist" of key takeaways. End with a compelling, high-urgency call-to-action.',
       lsi: 'Naturally weave these semantic LSI keywords to improve topical depth without keyword stuffing: {keywords}.'
     }
   });
@@ -786,6 +789,25 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Auto-populate editable headings/title when new research arrives
+  useEffect(() => {
+    if (currentResearch.length === 0) {
+      setEditableHeadings(null);
+      setEditableTitle('');
+      return;
+    }
+    const primary = currentResearch.find(c => c.headings && c.headings.length > 0) || currentResearch[0];
+    const junkPattern = /^(share|like what|follow|subscribe|in this blog|newsletter|cookie|privacy|menu|nav|sidebar|related|tags|categories|comments|leave a reply|about the author|recent posts|popular posts|advertisement|sign up|log in|get in touch|contact|back to top|table of contents)/i;
+    const filtered = (primary?.headings || []).filter(h =>
+      h.level !== 'h1' &&
+      h.text?.trim() &&
+      h.text.trim().length >= 10 &&
+      !junkPattern.test(h.text.trim())
+    );
+    setEditableHeadings(filtered);
+    setEditableTitle(primary?.title?.replace(/[-|].*$/, '').trim() || '');
+  }, [currentResearch]);
 
   const loadImagesForPost = async (postId: string): Promise<{featuredImage?: any, contentImages?: any[]}> => {
     if (!postId || postId === 'undefined') return {};
@@ -2114,22 +2136,25 @@ OUTPUT RULE:
       // Resolve focus keyword: UI state → settings (if not placeholder) → scraped title → fallback
       const settingsKeyword = settings.sopKeywords[0] || '';
       const isPlaceholder = !settingsKeyword || settingsKeyword.toLowerCase() === 'focus keyword';
-      const rawTitle = dataToUse[0]?.title?.replace(/[-|].*$/, '').trim() || '';
+      // Use user-edited title if available, otherwise fall back to scraped
+      const rawTitle = (editableTitle || dataToUse[0]?.title || '').replace(/[-|].*$/, '').trim();
       const titleDerived = rawTitle.split(/\s+/).slice(0, 5).join(' ');
       const focusKeyword = focusKeyword_state || (!isPlaceholder ? settingsKeyword : '') || dataToUse[0]?.query || titleDerived || 'Target Topic';
       console.log('[GENERATE] Focus keyword resolved:', focusKeyword, '| from state:', focusKeyword_state, '| from settings:', settingsKeyword, '| from title:', titleDerived);
 
-      // Extract exact headings and structured sections from the scraped article
+      // Extract exact headings — use user-edited list if available, otherwise scrape from research
       const primaryCompetitor = dataToUse.find(c => c.headings && c.headings.length > 0) || dataToUse[0];
       const junkHeadingPattern = /^(share|like what|follow|subscribe|in this blog|newsletter|cookie|privacy|menu|nav|sidebar|related|tags|categories|comments|leave a reply|about the author|recent posts|popular posts|advertisement|sign up|log in|get in touch|contact|back to top|table of contents)/i;
-      const scrapedHeadings = (primaryCompetitor?.headings || [])
-        .filter(h =>
-          h.level !== 'h1' &&
-          h.text?.trim() &&
-          h.text.trim().length >= 10 &&
-          !junkHeadingPattern.test(h.text.trim())
-        )
-        .map(h => `${h.level.toUpperCase()}: ${h.text.trim()}`);
+      const scrapedHeadings = editableHeadings !== null
+        ? editableHeadings.map(h => `${h.level.toUpperCase()}: ${h.text.trim()}`)
+        : (primaryCompetitor?.headings || [])
+            .filter(h =>
+              h.level !== 'h1' &&
+              h.text?.trim() &&
+              h.text.trim().length >= 10 &&
+              !junkHeadingPattern.test(h.text.trim())
+            )
+            .map(h => `${h.level.toUpperCase()}: ${h.text.trim()}`);
       const scrapedHeadingList = scrapedHeadings.length > 0
         ? scrapedHeadings.join('\n        ')
         : null;
@@ -3472,6 +3497,95 @@ ${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
                     </div>
                   )}
                 </div>
+
+                {/* Heading & Title Editor — shown after research, before generation */}
+                {currentResearch.length > 0 && editableHeadings !== null && (
+                  <div className={cn(
+                    "mt-6 p-6 rounded-lg border-2",
+                    settings.theme === 'dark' ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
+                  )}>
+                    <div className="flex items-center gap-2 mb-5">
+                      <Edit3 className="w-4 h-4 text-indigo-500" />
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Article Structure Editor</span>
+                      <span className={cn("text-[9px] font-black uppercase tracking-widest ml-auto", settings.theme === 'dark' ? "text-slate-600" : "text-slate-400")}>
+                        Edit before generation — changes are used as-is
+                      </span>
+                    </div>
+
+                    {/* Title editor */}
+                    <div className="mb-5 space-y-1.5">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Article Title</label>
+                      <input
+                        type="text"
+                        value={editableTitle}
+                        onChange={e => setEditableTitle(e.target.value)}
+                        className={cn(
+                          "w-full px-4 py-2.5 border-2 rounded-lg text-[11px] font-semibold focus:outline-none focus:border-indigo-500 transition-all",
+                          settings.theme === 'dark' ? "bg-slate-950 border-slate-700 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"
+                        )}
+                        placeholder="Article title..."
+                      />
+                    </div>
+
+                    {/* Headings list editor */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">
+                          Headings ({editableHeadings.length})
+                        </label>
+                        <button
+                          onClick={() => setEditableHeadings([...editableHeadings, { level: 'h2', text: '' }])}
+                          className="text-[9px] font-black uppercase tracking-widest text-indigo-500 hover:text-indigo-400 flex items-center gap-1"
+                        >
+                          <Plus className="w-3 h-3" /> Add
+                        </button>
+                      </div>
+                      {editableHeadings.length === 0 && (
+                        <p className="text-[10px] text-slate-500 text-center py-4 italic">No headings — AI will choose its own structure.</p>
+                      )}
+                      {editableHeadings.map((h, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <select
+                            value={h.level}
+                            onChange={e => {
+                              const updated = [...editableHeadings];
+                              updated[idx] = { ...updated[idx], level: e.target.value };
+                              setEditableHeadings(updated);
+                            }}
+                            className={cn(
+                              "px-2 py-2 border-2 rounded-lg text-[9px] font-black uppercase tracking-widest focus:outline-none focus:border-indigo-500 w-14 shrink-0",
+                              settings.theme === 'dark' ? "bg-slate-950 border-slate-700 text-slate-300" : "bg-slate-50 border-slate-200 text-slate-600"
+                            )}
+                          >
+                            <option value="h2">H2</option>
+                            <option value="h3">H3</option>
+                          </select>
+                          <input
+                            type="text"
+                            value={h.text}
+                            onChange={e => {
+                              const updated = [...editableHeadings];
+                              updated[idx] = { ...updated[idx], text: e.target.value };
+                              setEditableHeadings(updated);
+                            }}
+                            className={cn(
+                              "flex-1 px-3 py-2 border-2 rounded-lg text-[11px] focus:outline-none focus:border-indigo-500 transition-all",
+                              settings.theme === 'dark' ? "bg-slate-950 border-slate-700 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"
+                            )}
+                            placeholder="Heading text..."
+                          />
+                          <button
+                            onClick={() => setEditableHeadings(editableHeadings.filter((_, i) => i !== idx))}
+                            className="p-2 text-slate-500 hover:text-red-500 transition-colors shrink-0"
+                            title="Remove heading"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {currentResearch.length > 0 && (
                   <div className="flex flex-col items-center pt-8 gap-8 w-full">
