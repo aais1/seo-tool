@@ -2451,18 +2451,24 @@ OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>,
         MANDATORY CONSTRAINTS:
         - Apply the system instruction writing directives to every section — this is non-negotiable.
         - Begin output with the first H2 tag. No preamble, no repeated introduction.
-        - Every section MUST have at least 2-3 substantial <p> paragraphs of original content — never leave a heading with only a list and no paragraphs.
-        - Every list item (<li>) that mentions a concept MUST be preceded or followed by a <p> explaining that concept in depth.
+        ${settings.punMode
+          ? `- PUN MODE ACTIVE: Output ONLY the heading tags in order. Do NOT write any paragraphs, lists, or body text under any heading. Do NOT include any <p>, <ul>, <ol>, or <li> tags. Do NOT include any <a> links. Headings only — puns will be injected programmatically.`
+          : `- Every section MUST have at least 2-3 substantial <p> paragraphs of original content — never leave a heading with only a list and no paragraphs.
+        - Every list item (<li>) that mentions a concept MUST be preceded or followed by a <p> explaining that concept in depth.`
+        }
         - Do NOT add any headings beyond those in the MANDATORY HEADING STRUCTURE list. Every heading tag in your output must match exactly one entry from that list. No H4, H5, H6, or any invented sub-headings.
         - NEVER mention the words "Directive", "Rule", "SOP", or "Competitor" in the article text.
         - NEVER use placeholders like "{focus_keyword}". Use "${focusKeyword}" instead.
-        - TARGET: Aim for ${settings.targetWordCount} words of depth.
-        - OPTIMIZATION: Natural ${focusKeyword} density 1-2%.
+        ${!settings.punMode ? `- TARGET: Aim for ${settings.targetWordCount} words of depth.
+        - OPTIMIZATION: Natural ${focusKeyword} density 1-2%.` : ''}
 
         FORMATTING — CRITICAL:
-        - Return article body HTML only (H2, H3, P, UL, OL, LI tags ONLY).
+        ${settings.punMode
+          ? `- Return ONLY the H2/H3 heading tags, nothing else. No <p>, <ul>, <ol>, <li>, or <a> tags whatsoever.`
+          : `- Return article body HTML only (H2, H3, P, UL, OL, LI tags ONLY).
         - Every paragraph of prose MUST be wrapped in <p>...</p> tags — NO bare text outside of tags.
-        - Lists must use <ul><li>item</li></ul> or <ol><li>item</li></ol> — never bare hyphens or asterisks.
+        - Lists must use <ul><li>item</li></ul> or <ol><li>item</li></ol> — never bare hyphens or asterisks.`
+        }
         - Do NOT wrap output in <!DOCTYPE>, <html>, <head>, or <body> tags.
         - Return within: { "content": "..." }
       `;
@@ -2515,6 +2521,7 @@ STRICT RULES:
 - Each pun must be a complete, standalone phrase — clever wordplay, double meanings, or sound-alike substitutions.
 - Do NOT repeat puns across sections.
 - Do NOT use markdown. Return ONLY valid JSON.
+- Do NOT include any URLs, hyperlinks, <a> tags, or HTML markup inside any pun string — plain text only.
 - The "puns" array for each section MUST contain EXACTLY the count specified — no more, no less.
 
 SECTIONS WITH MANDATORY PUN COUNTS:
@@ -2568,6 +2575,23 @@ Return JSON in this exact structure:
           } catch (e) {
             console.warn('[PUN MODE] Failed to parse pun response, skipping', e);
           }
+
+          // STRICT PUN-MODE CLEANUP — remove everything that isn't a heading or pun list
+          result.content = result.content
+            // Remove ALL <p>...</p> blocks — no paragraphs allowed
+            .replace(/<p[^>]*>[\s\S]*?<\/p>/gi, '')
+            // Remove all <ul> blocks that are NOT the pun list (pun lists have class="pun-list")
+            .replace(/<ul(?![^>]*pun-list)[^>]*>[\s\S]*?<\/ul>/gi, '')
+            // Remove all <ol> blocks
+            .replace(/<ol[^>]*>[\s\S]*?<\/ol>/gi, '')
+            // Strip <a href="..."> links — unwrap inner text only
+            .replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, '$1')
+            // Remove any bare text nodes outside tags (short stray lines)
+            .replace(/^(?!<)[^\n<]{1,}\n/gm, '')
+            // Collapse excessive blank lines
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+          console.log('[PUN MODE] Cleanup done — paragraphs and links stripped');
         }
       }
 
