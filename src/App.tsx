@@ -2285,6 +2285,12 @@ OUTPUT: Return ONLY valid JSON. Zero conversational filler.`
 
         GOAL: Generate a high-CTR SEO Title, Meta Title, and Meta Description following your system instruction writing directive exactly.
 
+        HARD CHARACTER LIMITS (count every space and punctuation mark):
+        - "title" (H1): under 60 characters. Example length: "Unlock Retention: Predict Customer Churn with AI" = 49 chars ✓
+        - "meta_title": under 60 characters. Example: "Predict Customer Churn with AI & Boost Profits" = 46 chars ✓
+        - "meta_description": 150–160 characters EXACTLY. Example of 155 chars: "Master AI-powered churn prediction. Our guide covers data, models, and strategies to retain customers and boost profits. Start now." — count yours before outputting.
+        - "meta_description" MUST end with an imperative CTA (e.g., "Start today.", "Get started now.", "Learn more.").
+
         REQUIRED JSON SCHEMA:
         {
           "title": "H1 tag content here",
@@ -2296,8 +2302,11 @@ OUTPUT: Return ONLY valid JSON. Zero conversational filler.`
       
       if (titleData) {
         result.title = titleData.title || titleData;
-        result.meta_title = titleData.meta_title || '';
-        result.meta_description = titleData.meta_description || '';
+        result.meta_title = (titleData.meta_title || '').substring(0, 60).replace(/\s\S*$/, '');
+        const rawMeta = titleData.meta_description || '';
+        result.meta_description = rawMeta.length > 162
+          ? rawMeta.substring(0, 157).replace(/\s\S*$/, '...').trimEnd()
+          : rawMeta;
         result.featured_image_prompt = titleData.featured_image_prompt || '';
       }
 
@@ -2318,7 +2327,7 @@ OUTPUT: Return ONLY JSON. No preamble.`
 
         GOAL: Generate a persuasive introduction following your system instruction writing directive exactly.
 
-        INJECTION RULE: The focus keyword "${focusKeyword}" must be present within the first two sentences.
+        MANDATORY INJECTION RULE: The exact phrase "${focusKeyword}" MUST appear in sentence 1 or sentence 2 — not later. This is non-negotiable and overrides all other style guidance.
         RETURN JSON: { "introduction": "HTML formatted content here" }
       `, sopModels.introduction, introSystemPrompt);
       
@@ -2336,14 +2345,14 @@ ${processSOP(settings.prompts.content) || 'Write comprehensive, authoritative, f
 MANDATORY SEMANTIC / LSI DIRECTIVE (governs keyword integration):
 ${settings.lsiKeywords ? (processSOP(settings.prompts.lsi) || `Naturally integrate these semantic terms throughout: ${lsiTerms}.`) : `Naturally integrate these semantic terms throughout: ${lsiTerms}.`}
 
-OUTPUT RULES: Generate full-scale HTML content. Apply the directives above to every paragraph under every heading. Silent execution. JSON output only.`;
+OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>, or <body> tags. Use only H2, H3, P, UL, OL, LI tags. Apply the directives above to every paragraph under every heading. Silent execution. JSON output only.`;
 
       const contentPrompt = `
         ${enhancedContext}
         ARTICLE TITLE: ${result.title}
-        INTRO PREVIEW: ${result.introduction.substring(0, 300)}...
+        INTRO PREVIEW (context only — do NOT copy or include this text): ${result.introduction.substring(0, 300)}...
 
-        GOAL: Generate the full body content in HTML format.
+        GOAL: Generate the full body content in HTML format. Start DIRECTLY with the first H2 heading — do NOT include an introduction paragraph before it.
 
         YOUR ROLE: Your system instructions define HOW to write (style, structure, keyword usage). The heading list below defines WHAT structure to follow. These two are complementary — apply your writing directive to every paragraph under every heading listed.
 
@@ -2352,19 +2361,22 @@ OUTPUT RULES: Generate full-scale HTML content. Apply the directives above to ev
 
         MANDATORY CONSTRAINTS:
         - Apply the system instruction writing directives to every section — this is non-negotiable.
+        - Begin output with the first H2 tag. No preamble, no repeated introduction.
         - Write completely original, deeply thorough paragraphs under each heading.
         - NEVER mention the words "Directive", "Rule", "SOP", or "Competitor" in the article text.
         - NEVER use placeholders like "{focus_keyword}". Use "${focusKeyword}" instead.
         - TARGET: Aim for ${settings.targetWordCount} words of depth.
         - OPTIMIZATION: Natural ${focusKeyword} density 1-2%.
 
-        FORMATTING: Return raw HTML (H2, H3, P, UL, LI) within:
+        FORMATTING: Return article body HTML only (H2, H3, P, UL, OL, LI). Do NOT wrap in <!DOCTYPE>, <html>, <head>, or <body> tags. Return within:
         { "content": "..." }
       `;
       const contentData = await callStep('Content', contentPrompt, sopModels.content, contentSystemPrompt);
       
       if (contentData) {
-        result.content = contentData.content || (typeof contentData === 'string' ? contentData : '');
+        const rawContent = contentData.content || (typeof contentData === 'string' ? contentData : '');
+        // Strip model-invented placeholder spans e.g. <span class="focus-keyword">focus keyword</span>
+        result.content = rawContent.replace(/<span[^>]*class=["'][^"']*(?:focus-keyword|lsi)[^"']*["'][^>]*>(.*?)<\/span>/gi, '$1');
         // Skipping multiple content image generation per user request
         result.contentImages = [];
       }
@@ -2395,7 +2407,9 @@ OUTPUT RULES: Generate full-scale HTML content. Apply the directives above to ev
           GOAL: Generate ${tasks.join(' and ')} following your system instruction directives exactly.
 
           CONSTRAINTS:
-          ${settings.includeConclusion ? `- Start conclusion with an appropriate SEO-optimized <h2> heading.` : ''}
+          ${settings.includeConclusion ? `- Start conclusion with <h2>Summary & Master Action Plan</h2> exactly.` : ''}
+          - Wrap every paragraph of text in <p>...</p> tags — no bare text outside of tags.
+          - Use <strong>...</strong> for bold text — NEVER use markdown **bold** syntax inside HTML.
           - Apply your system instruction directives to every section you generate.
           - No mention of "Directive" or "SOP" in final text.
 
