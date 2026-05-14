@@ -860,34 +860,34 @@ export default function App() {
           const data = settingsDoc.data() as AppSettings;
           // Migration for legacy or invalid model names
           const validModels = [
-            'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-lite',
-            'gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo',
-            'claude-3-5-sonnet-latest', 'claude-3-opus-latest', 'claude-3-haiku-latest'
+            'models/gemini-2.5-flash', 'models/gemini-2.0-flash-lite',
+            'gpt-4o-mini', 'gpt-3.5-turbo',
+            'claude-3-5-haiku-20241022', 'claude-3-haiku-20240307'
           ];
           if (!data.aiModel || !validModels.includes(data.aiModel)) {
-            data.aiModel = 'gemini-2.0-flash-lite';
+            data.aiModel = 'models/gemini-2.5-flash';
           }
           if (!data.sopModels) {
             data.sopModels = {
-              title: 'gemini-2.0-flash-lite',
-              introduction: 'gemini-2.0-flash-lite',
-              content: 'gemini-2.0-flash-lite',
-              faq: 'gemini-2.0-flash-lite',
-              metaDescription: 'gemini-2.0-flash-lite',
-              conclusion: 'gemini-2.0-flash-lite',
-              lsi: 'gemini-2.0-flash-lite'
+              title: 'models/gemini-2.5-flash',
+              introduction: 'models/gemini-2.5-flash',
+              content: 'models/gemini-2.5-flash',
+              faq: 'models/gemini-2.5-flash',
+              metaDescription: 'models/gemini-2.5-flash',
+              conclusion: 'models/gemini-2.5-flash',
+              lsi: 'models/gemini-2.5-flash'
             };
           } else {
-            // Ensure individual models are also migrated if they were invalid or deprecated versions
+            // Migrate any stale/invalid model IDs
             Object.keys(data.sopModels).forEach(k => {
               const key = k as keyof AppSettings['sopModels'];
-              if (!validModels.includes(data.sopModels![key])) {
-                data.sopModels![key] = 'gemini-2.0-flash-lite';
+              if (data.sopModels![key] && !validModels.includes(data.sopModels![key])) {
+                data.sopModels![key] = 'models/gemini-2.5-flash';
               }
             });
           }
           if (data.sopModels && !data.sopModels.metaDescription) {
-            data.sopModels.metaDescription = 'gemini-2.0-flash-lite';
+            data.sopModels.metaDescription = 'models/gemini-2.5-flash';
           }
           if (data.prompts && !data.prompts.metaDescription) {
             data.prompts.metaDescription = 'Act as an expert SEO analyst. Generate a compelling meta description between 150-160 characters. Lead with a primary benefit, integrate the focus keyword naturally, and conclude with a high-conversion call-to-action that creates urgency or curiosity.';
@@ -964,11 +964,10 @@ export default function App() {
   const handleSaveSettings = async () => {
     if (!user) return;
     try {
-      const { geminiKey, openaiKey, anthropicKey, ...safeSettings } = settings;
-      // Keep API keys only in localStorage; wpAppPassword is saved to Firestore
-      localStorage.setItem('ws_sensitive_keys', JSON.stringify({ geminiKey, openaiKey, anthropicKey, wpAppPassword: settings.wpAppPassword }));
+      // Cache locally for offline access, and also persist everything (including keys) to Firestore
+      localStorage.setItem('ws_sensitive_keys', JSON.stringify({ geminiKey: settings.geminiKey, openaiKey: settings.openaiKey, anthropicKey: settings.anthropicKey, wpAppPassword: settings.wpAppPassword }));
       await setDoc(doc(db, 'settings', user.uid), {
-        ...safeSettings,
+        ...settings,
         updatedAt: serverTimestamp()
       });
       showNotification("Settings saved.");
@@ -2066,7 +2065,7 @@ OUTPUT RULE:
       const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
 
       try {
-        const modelToUse = 'models/gemini-2.5-flash';
+        const modelToUse = modelId.startsWith('models/') ? modelId : `models/${modelId}`;
         console.info(`Using Gemini model: ${modelToUse}`);
         console.log('[AI LOG] callAIModel Gemini INPUT', { model: modelToUse, systemPrompt, prompt });
         const response = await ai.models.generateContent({
@@ -2106,7 +2105,8 @@ OUTPUT RULE:
       throw new Error(errorData.details || errorData.error || `HTTP ${res.status}`);
     }
     const data = await res.json();
-    const proxyOutput = typeof data === 'string' ? data : (data.content || JSON.stringify(data));
+    // Always stringify the full object — data.content would incorrectly extract only one field
+    const proxyOutput = typeof data === 'string' ? data : JSON.stringify(data);
     console.log('[AI LOG] callAIModel Proxy OUTPUT', proxyOutput);
     return proxyOutput;
   };
@@ -3027,9 +3027,9 @@ ${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
         <div className="flex-1 w-full px-4 flex flex-col gap-2">
           {[
             { id: 'competitors', icon: <Search className="w-5 h-5" />, label: 'Research' },
-            { id: 'sops', icon: <Layers className="w-5 h-5" />, label: 'Neural Protocols' },
+            { id: 'sops', icon: <Layers className="w-5 h-5" />, label: 'SEO SOPs' },
             { id: 'optimizer', icon: <FileEdit className="w-5 h-5" />, label: 'Drafts' },
-            { id: 'proofreader', icon: <ShieldCheck className="w-5 h-5" />, label: 'Proofreader' },
+            // { id: 'proofreader', icon: <ShieldCheck className="w-5 h-5" />, label: 'Proofreader' },
             { id: 'history', icon: <Database className="w-5 h-5" />, label: 'History' },
             { id: 'setup', icon: <Globe className="w-5 h-5" />, label: 'Setup' },
             { id: 'settings', icon: <Settings className="w-5 h-5" />, label: 'Settings' },
@@ -5535,10 +5535,8 @@ ${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
                               </div>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                    {[
-                                    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', desc: 'Fast, efficient, and balanced performance' },
-                                    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', desc: 'High-intelligence reasoning for complex tasks' },
-                                    { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash', desc: 'Next-gen experimental flash model' },
-                                    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', desc: 'Advanced multimodal intelligence' }
+                                    { id: 'models/gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Default — best balance of speed and quality' },
+                                    { id: 'models/gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', desc: 'Ultra-fast, lowest cost option' },
                                   ].map((model) => (
                                   <button
                                     key={model.id}
@@ -5609,9 +5607,8 @@ ${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
                               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Select GPT Instance</label>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {[
-                                  { id: 'gpt-4o', name: 'GPT-4o', desc: 'Omnidirectional reasoning & high semantic depth' },
-                                  { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', desc: 'Proven reliability for structural SEO' },
-                                  { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', desc: 'High-speed draft prototyping' }
+                                  { id: 'gpt-4o-mini', name: 'GPT-4o Mini', desc: 'Smart, affordable — best value for SEO' },
+                                  { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', desc: 'Fastest and cheapest GPT option' }
                                 ].map((model) => (
                                   <button
                                     key={model.id}
@@ -5674,9 +5671,8 @@ ${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
                               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Select Claude Model</label>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {[
-                                  { id: 'claude-3-5-sonnet-latest', name: 'Claude 3.5 Sonnet', desc: 'Superior tactical writing and logic flow' },
-                                  { id: 'claude-3-opus-latest', name: 'Claude 3 Opus', desc: 'Maximized creative depth and nuance' },
-                                  { id: 'claude-3-haiku-latest', name: 'Claude 3 Haiku', desc: 'Instant content generation' }
+                                  { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', desc: 'Latest, fastest, most affordable Claude' },
+                                  { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', desc: 'Proven fast and low-cost' }
                                 ].map((model) => (
                                   <button
                                     key={model.id}
@@ -6573,7 +6569,7 @@ function SopInput({
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] underline decoration-indigo-600 decoration-2 underline-offset-4">{label}</label>
-        <div className="flex items-center gap-6">
+        {/* <div className="flex items-center gap-6">
           {onModelChange && (
             <div className="flex items-center gap-2">
               <Cpu className="w-3 h-3 text-indigo-500" />
@@ -6586,20 +6582,17 @@ function SopInput({
                 )}
               >
                 <option value="inherit">Inherit Global Model</option>
-                <optgroup label="Google Intelligence">
-                  <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-                  <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-                  <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Exp)</option>
+                <optgroup label="Google Gemini">
+                  <option value="models/gemini-2.5-flash">Gemini 2.5 Flash</option>
+                  <option value="models/gemini-2.0-flash-lite">Gemini 2.0 Flash Lite</option>
                 </optgroup>
-                <optgroup label="OpenAI Core">
-                  <option value="gpt-4o">GPT-4o</option>
-                  <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                <optgroup label="OpenAI">
+                  <option value="gpt-4o-mini">GPT-4o Mini</option>
                   <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
                 </optgroup>
-                <optgroup label="Anthropic Logic">
-                  <option value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>
-                  <option value="claude-3-opus-latest">Claude 3 Opus</option>
-                  <option value="claude-3-haiku-latest">Claude 3 Haiku</option>
+                <optgroup label="Anthropic Claude">
+                  <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+                  <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
                 </optgroup>
               </select>
             </div>
@@ -6610,7 +6603,7 @@ function SopInput({
               <span className="text-[8px] font-black uppercase tracking-widest leading-none">{tip}</span>
             </div>
           )}
-        </div>
+        </div> */}
       </div>
       {long ? (
         <textarea 
