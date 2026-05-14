@@ -2699,10 +2699,6 @@ Return JSON in this exact structure:
       const draftWithId = { ...assembledBlogPost, id: draftId };
       setBlogDraft(draftWithId);
       
-      if (draftWithId.featuredImage?.prompt) {
-        generateIndividualImage(draftWithId.featuredImage.prompt, 'featured', undefined, settings.aspectRatio);
-      }
-      
       if (draftWithId.contentImages && draftWithId.contentImages.length > 0) {
         draftWithId.contentImages.forEach((img, idx) => {
           if (img.prompt) {
