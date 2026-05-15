@@ -286,6 +286,8 @@ interface AppSettings {
   openaiKey?: string;
   anthropicKey?: string;
   geminiKey?: string;
+  googleSearchApiKey?: string;
+  googleSearchCx?: string;
   sopModels?: {
     title: string;
     introduction: string;
@@ -540,6 +542,8 @@ export default function App() {
     openaiKey: '',
     anthropicKey: '',
     geminiKey: '',
+    googleSearchApiKey: '',
+    googleSearchCx: '',
     sopModels: {
   title: 'models/gemini-2.5-flash',
   introduction: 'models/gemini-2.5-flash',
@@ -965,7 +969,7 @@ export default function App() {
     if (!user) return;
     try {
       // Cache locally for offline access, and also persist everything (including keys) to Firestore
-      localStorage.setItem('ws_sensitive_keys', JSON.stringify({ geminiKey: settings.geminiKey, openaiKey: settings.openaiKey, anthropicKey: settings.anthropicKey, wpAppPassword: settings.wpAppPassword }));
+      localStorage.setItem('ws_sensitive_keys', JSON.stringify({ geminiKey: settings.geminiKey, openaiKey: settings.openaiKey, anthropicKey: settings.anthropicKey, wpAppPassword: settings.wpAppPassword, googleSearchApiKey: settings.googleSearchApiKey, googleSearchCx: settings.googleSearchCx }));
       await setDoc(doc(db, 'settings', user.uid), {
         ...settings,
         updatedAt: serverTimestamp()
@@ -1874,7 +1878,7 @@ OUTPUT RULE:
   const handleSerpAnalysis = async (targetUrls: string[]) => {
     setIsScraping(true);
     setShowResearchReport(false);
-    setCurrentResearch([]); 
+    setCurrentResearch([]);
     const apiKey = settings.geminiKey || (process.env.GEMINI_API_KEY as string);
     if (!apiKey) {
       showNotification("Authentication Failure: Gemini Engine Offline", 'error');
@@ -1882,37 +1886,103 @@ OUTPUT RULE:
       return;
     }
 
-    const validUrls = (targetUrls || [])
+    const normalizeUrl = (u: string) => {
+      try {
+        const urlObj = new URL(u.trim());
+        urlObj.hash = '';
+        return urlObj.toString().replace(/\/$/, "");
+      } catch { return u.trim(); }
+    };
+
+    const manualUrls = (targetUrls || [])
       .map(u => u.trim())
       .filter(u => u.startsWith('http'))
-      .map(u => {
-        try {
-          const urlObj = new URL(u);
-          urlObj.hash = ''; // Remove fragments
-          return urlObj.toString().replace(/\/$/, ""); // Normalize: remove trailing slash
-        } catch (e) {
-          return u;
-        }
-      });
-      
-    if (validUrls.length === 0) {
-      showNotification("Please provide at least one valid competitor URL.", 'error');
+      .map(normalizeUrl);
+
+    const keyword = focusKeyword_state.trim();
+
+    // Require either a keyword or at least one manual URL
+    if (manualUrls.length === 0 && !keyword) {
+      showNotification("Please provide a competitor URL or a focus keyword.", 'error');
       setIsScraping(false);
       return;
     }
 
     const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
     try {
-      addResearchLog(`Protocol Initiated: Intelligence Gathering for ${validUrls.length} sources`, 'info');
-      
-      setScrapingProgress({ processed: 0, total: validUrls.length, currentUrl: "Initializing..." }); 
+      // Phase 0: SERP Discovery via Gemini Google Search grounding (uses existing Gemini key)
+      let serpUrls: string[] = [];
+      if (keyword) {
+        addResearchLog(`SERP Discovery: Searching Google for top competitors for "${keyword}"...`, 'info');
+        setScrapingProgress({ processed: 0, total: 0, currentUrl: `Searching Google for "${keyword}"...` });
+        try {
+          const serpModels = ['models/gemini-2.0-flash', 'models/gemini-2.5-flash', 'models/gemini-2.0-flash-lite'];
+          let serpResult: any = null;
+          for (const model of serpModels) {
+            try {
+              serpResult = await ai.models.generateContent({
+                model,
+                contents: [{ role: 'user', parts: [{ text: `Search Google and return the top 5 URLs currently ranking for the keyword: "${keyword}". Return ONLY a valid JSON array of 5 URLs. No explanation. Example: ["https://site1.com/page","https://site2.com/page"]` }] }],
+                config: { tools: [{ googleSearch: {} }], temperature: 0.1 }
+              });
+              if (serpResult) break;
+            } catch (me: any) {
+              if (String(me).includes('404') || String(me).includes('model')) continue;
+              throw me;
+            }
+          }
 
-        // Task 1: Scrape all manual competitor nodes
-        if (validUrls.length > 0) {
-          showNotification(`Synchronizing ${validUrls.length} primary targets...`);
-          
-          for (const url of validUrls) {
-            addResearchLog(`Synthesizing connection to ${url} (Waiting for dynamic ingestion)...`, 'info');
+          if (serpResult) {
+            // Primary: extract from grounding metadata (pages Gemini actually accessed)
+            const chunks: any[] = (serpResult as any).candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+            const chunkUrls = chunks
+              .map((c: any) => c?.web?.uri || '')
+              .filter((u: string) => u.startsWith('http'));
+
+            // Secondary: parse JSON array from text response
+            let textUrls: string[] = [];
+            try {
+              const text = serpResult.text || '';
+              const match = text.match(/\[[\s\S]*?\]/);
+              if (match) {
+                const parsed = JSON.parse(match[0]);
+                if (Array.isArray(parsed)) textUrls = parsed.filter((u: any) => typeof u === 'string' && u.startsWith('http'));
+              }
+            } catch {}
+
+            const rawSerpUrls = [...new Set([...chunkUrls, ...textUrls])];
+            serpUrls = rawSerpUrls
+              .map(normalizeUrl)
+              .filter(u => u.startsWith('http') && !manualUrls.includes(u))
+              .slice(0, 5);
+
+            if (serpUrls.length > 0) {
+              addResearchLog(`SERP Discovery: Found ${serpUrls.length} top-ranking competitor URLs via Google for "${keyword}"`, 'success');
+            } else {
+              addResearchLog(`SERP Discovery: Google search returned no usable URLs — continuing with manual URLs`, 'warning');
+            }
+          }
+        } catch (serpErr: any) {
+          addResearchLog(`SERP Discovery error: ${serpErr.message} — continuing with manual URLs`, 'warning');
+        }
+      }
+
+      // Combine: manual URL(s) first, then SERP-discovered competitors (top 5)
+      const allUrls = [...manualUrls, ...serpUrls.slice(0, 5)];
+
+      if (allUrls.length === 0) {
+        showNotification("No valid URLs to research. Add a competitor URL or focus keyword.", 'error');
+        setIsScraping(false);
+        return;
+      }
+
+      addResearchLog(`Protocol Initiated: Intelligence Gathering for ${allUrls.length} sources (${manualUrls.length} manual + ${serpUrls.length} SERP)`, 'info');
+      setScrapingProgress({ processed: 0, total: allUrls.length, currentUrl: "Initializing..." });
+      showNotification(`Synchronizing ${allUrls.length} intelligence targets (${serpUrls.length > 0 ? `${serpUrls.length} SERP + ${manualUrls.length} manual` : `${manualUrls.length} manual`})...`);
+
+      for (const url of allUrls) {
+            const sourceLabel = serpUrls.includes(url) ? '[SERP]' : '[Manual]';
+            addResearchLog(`${sourceLabel} Synthesizing connection to ${url}...`, 'info');
             setScrapingProgress(p => ({ ...p, currentUrl: url }));
             
             // Wait for 3s before fetching (reduced protocol delay)
@@ -1947,7 +2017,7 @@ OUTPUT RULE:
                     headings: data.headings || [],
                     sections: data.sections || []
                   };
-                  addResearchLog(`Node ingested: ${minimal.title} (headings: ${minimal.headings.length})`, 'success');
+                  addResearchLog(`${sourceLabel} Node ingested: ${minimal.title} (headings: ${minimal.headings.length})`, 'success');
                   // Update UI immediately without analysis or Firestore saves
                   setCurrentResearch(prev => [...prev, minimal]);
                   addUniqueCompetitors([minimal]);
@@ -1967,7 +2037,7 @@ OUTPUT RULE:
                   lsiKeywords: data.lsiKeywords || []
                 };
 
-                addResearchLog(`Node ingested: ${normalized.title} (${normalized.wordCount} words, ${normalized.imageCount} imgs)`, 'success');
+                addResearchLog(`${sourceLabel} Node ingested: ${normalized.title} (${normalized.wordCount} words, ${normalized.imageCount} imgs)`, 'success');
                 const analysisData = await performCompetitorAnalysis(normalized);
                 const enriched = { ...normalized, analysis: analysisData };
                 try { saveCompetitorToFirestore(enriched); } catch (e) { /* non-fatal */ }
@@ -1983,9 +2053,6 @@ OUTPUT RULE:
               setScrapingProgress(p => ({ ...p, processed: p.processed + 1 }));
             }
           }
-        } else {
-          addResearchLog("No target URLs provided for protocol execution.", "warning");
-        }
 
         addResearchLog("Research Protocol Finalized.", "success");
         showNotification("Intelligence collection complete. Report generated in Intelligence Hub.");
@@ -5572,13 +5639,13 @@ ${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
                             </div>
                             
                             <div className="space-y-4">
-                              <InputGroup 
-                                label="Gemini API Key" 
-                                placeholder="Enter your AI Studio key..." 
-                                value={settings.geminiKey || ''} 
-                                onChange={(v) => setSettings({...settings, geminiKey: v})} 
-                                type="password" 
-                                theme={settings.theme} 
+                              <InputGroup
+                                label="Gemini API Key"
+                                placeholder="Enter your AI Studio key..."
+                                value={settings.geminiKey || ''}
+                                onChange={(v) => setSettings({...settings, geminiKey: v})}
+                                type="password"
+                                theme={settings.theme}
                               />
                               <div className="flex items-start gap-3 p-4 bg-amber-500/5 border border-amber-500/20 rounded-lg">
                                 <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
@@ -5587,6 +5654,7 @@ ${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
                                 </p>
                               </div>
                             </div>
+
                           </motion.div>
                         )}
 

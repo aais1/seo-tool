@@ -300,23 +300,178 @@ async function startServer() {
     }
   });
 
-  // API Route: SERP Analysis (Simulated for now, replace with real Search API if needed)
-  app.post("/api/serp-analysis", async (req, res) => {
-    const { query } = req.body;
-    if (!query) return res.status(400).json({ error: "Query is required" });
+  // API Route: SERP Search — find top 5 organic competitor URLs for a keyword
+  app.post("/api/serp-search", async (req, res) => {
+    const { keyword, googleSearchApiKey, googleSearchCx } = req.body;
+    if (!keyword) return res.status(400).json({ error: "Keyword is required" });
+
+    const serpAgents = [
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+    ];
+    const randomAgent = serpAgents[Math.floor(Math.random() * serpAgents.length)];
+    const blockedDomains = ['bing.com', 'microsoft.com', 'duckduckgo.com', 'google.com', 'yahoo.com', 'youtube.com', 'wikipedia.org', 'amazon.com'];
+
+    const isBlockedUrl = (href: string): boolean => {
+      try {
+        const parsed = new URL(href);
+        const internalBlocked = ['localhost', '127.0.0.1', '0.0.0.0', '169.254.169.254'];
+        if (internalBlocked.some(b => parsed.hostname.includes(b))) return true;
+        if (blockedDomains.some(d => parsed.hostname.includes(d))) return true;
+        return false;
+      } catch { return true; }
+    };
+
+    // Attempt 1: Bing organic results
+    const tryBing = async (): Promise<string[]> => {
+      const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(keyword)}&count=10&setlang=en&cc=US&mkt=en-US&form=QBLH`;
+      const response = await axios.get(bingUrl, {
+        headers: {
+          "User-Agent": randomAgent,
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Accept-Encoding": "gzip, deflate, br",
+          "Cache-Control": "no-cache",
+          "Pragma": "no-cache",
+        },
+        timeout: 20000,
+        maxRedirects: 5,
+        httpsAgent,
+        httpAgent,
+        validateStatus: (status) => status < 500,
+      });
+
+      const $ = cheerio.load(response.data);
+      const found: string[] = [];
+
+      $('li.b_algo').each((_, el) => {
+        if (found.length >= 5) return;
+        // Primary: h2 a href
+        let href = $(el).find('h2 a').first().attr('href') || '';
+        // If Bing redirect link, try to decode real URL from cite element
+        if (!href || href.includes('/ck/a?') || href.startsWith('/search')) {
+          const citeText = $(el).find('cite').first().text().trim();
+          if (citeText) {
+            href = citeText.startsWith('http') ? citeText : `https://${citeText.split(' ')[0]}`;
+          }
+        }
+        if (href && href.startsWith('http') && !isBlockedUrl(href) && !found.includes(href)) {
+          found.push(href);
+        }
+      });
+
+      return found;
+    };
+
+    // Attempt 2: DuckDuckGo HTML (no-JS endpoint)
+    const tryDDG = async (): Promise<string[]> => {
+      const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(keyword)}&kl=us-en`;
+      const response = await axios.get(ddgUrl, {
+        headers: {
+          "User-Agent": randomAgent,
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+        timeout: 20000,
+        maxRedirects: 5,
+        httpsAgent,
+        httpAgent,
+      });
+
+      const $ = cheerio.load(response.data);
+      const found: string[] = [];
+
+      $('a.result__a').each((_, el) => {
+        if (found.length >= 5) return;
+        const href = $(el).attr('href') || '';
+        // DDG HTML uses redirect links: //duckduckgo.com/l/?uddg=ENCODED_URL
+        const match = href.match(/[?&]uddg=([^&]+)/);
+        if (match) {
+          try {
+            const realUrl = decodeURIComponent(match[1]);
+            if (realUrl.startsWith('http') && !isBlockedUrl(realUrl) && !found.includes(realUrl)) {
+              found.push(realUrl);
+            }
+          } catch {}
+        } else if (href.startsWith('http') && !isBlockedUrl(href) && !found.includes(href)) {
+          found.push(href);
+        }
+      });
+
+      return found;
+    };
+
+    // Attempt 0: Google Custom Search JSON API (official, most accurate)
+    const tryGoogle = async (): Promise<string[]> => {
+      if (!googleSearchApiKey || !googleSearchCx) throw new Error("Google Search API keys not configured");
+      const googleUrl = `https://customsearch.googleapis.com/customsearch/v1?key=${encodeURIComponent(googleSearchApiKey)}&cx=${encodeURIComponent(googleSearchCx)}&q=${encodeURIComponent(keyword)}&num=10&gl=us&hl=en`;
+      const response = await axios.get(googleUrl, { timeout: 15000 });
+      const items: any[] = response.data.items || [];
+      const found: string[] = [];
+      for (const item of items) {
+        if (found.length >= 5) break;
+        const link: string = item.link || '';
+        if (link.startsWith('http') && !isBlockedUrl(link) && !found.includes(link)) {
+          found.push(link);
+        }
+      }
+      return found;
+    };
 
     try {
-      // In a real scenario, use Custom Search API or a scraper
-      // For now, we'll suggest using Gemini's search grounding on the client, 
-      // but the user wants word counts of top 5 results.
-      // We will simulate a search result set for the demo, or try to use a simple search scraper.
-      
-      // Let's use a placeholder for now as real SERP scraping is complex and often blocked.
-      // We'll guide the user to provide competitor URLs manually if search fails.
-      res.json({ message: "SERP analysis triggered. Please use the competitor urls for specific analysis." });
+      let urls: string[] = [];
+      let engine = 'unknown';
+
+      // Try Google first (if keys are configured)
+      if (googleSearchApiKey && googleSearchCx) {
+        try {
+          urls = await tryGoogle();
+          engine = 'google';
+          console.log(`[SERP] Google found ${urls.length} URLs for: "${keyword}"`);
+        } catch (googleErr: any) {
+          console.warn(`[SERP] Google failed: ${googleErr.message}, falling back to Bing...`);
+        }
+      }
+
+      // Fall back to Bing
+      if (urls.length < 3) {
+        try {
+          const bingUrls = await tryBing();
+          engine = urls.length > 0 ? 'google+bing' : 'bing';
+          for (const u of bingUrls) {
+            if (!urls.includes(u) && urls.length < 5) urls.push(u);
+          }
+          console.log(`[SERP] Bing supplemented to ${urls.length} URLs for: "${keyword}"`);
+        } catch (bingErr: any) {
+          console.warn(`[SERP] Bing failed: ${bingErr.message}, trying DuckDuckGo...`);
+        }
+      }
+
+      // Fall back to DuckDuckGo
+      if (urls.length < 3) {
+        try {
+          const ddgUrls = await tryDDG();
+          engine = urls.length > 0 ? `${engine}+ddg` : 'duckduckgo';
+          for (const u of ddgUrls) {
+            if (!urls.includes(u) && urls.length < 5) urls.push(u);
+          }
+          console.log(`[SERP] DuckDuckGo supplemented to ${urls.length} URLs for: "${keyword}"`);
+        } catch (ddgErr: any) {
+          console.warn(`[SERP] DuckDuckGo also failed: ${ddgErr.message}`);
+        }
+      }
+
+      res.json({ urls: urls.slice(0, 5), keyword, engine, count: urls.length });
     } catch (error: any) {
-      res.status(500).json({ error: "SERP analysis failed" });
+      console.error(`[SERP] Search failed for "${keyword}":`, error.message);
+      res.status(500).json({ error: "SERP search failed", details: error.message, urls: [] });
     }
+  });
+
+  // API Route: SERP Analysis (legacy placeholder)
+  app.post("/api/serp-analysis", async (req, res) => {
+    res.json({ message: "Use /api/serp-search for real SERP competitor discovery." });
   });
 
   // API Route: WordPress Categories
