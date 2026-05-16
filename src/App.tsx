@@ -864,7 +864,7 @@ export default function App() {
           const data = settingsDoc.data() as AppSettings;
           // Migration for legacy or invalid model names
           const validModels = [
-            'models/gemini-2.5-flash', 'models/gemini-2.0-flash-lite',
+            'models/gemini-2.5-flash', 'models/gemini-2.5-flash-lite',
             'gpt-4o-mini', 'gpt-3.5-turbo',
             'claude-3-5-haiku-20241022', 'claude-3-haiku-20240307'
           ];
@@ -1135,9 +1135,8 @@ export default function App() {
       const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
 
 const modelsToTry = [
-  'models/gemini-2.0-flash-lite',
-  'models/gemini-2.0-flash',
-  'models/gemini-1.5-flash-latest'
+  'models/gemini-2.5-flash',
+  'models/gemini-2.5-flash-lite'
 ];
       let response = null;
       let lastError = null;
@@ -1845,9 +1844,9 @@ OUTPUT RULE:
       INTRODUCTION: ${blogDraft.introduction.substring(0, 1000)}
 
       Return ONLY the optimized prompt text. The prompt should be descriptive, focus on lighting, texture, and style appropriate for the industry, and avoid any generic text labels.`;
-      console.log('[AI LOG] Featured Image Prompt Engineer INPUT', { model: 'models/gemini-2.0-flash-lite', prompt: featuredPromptInput });
+      console.log('[AI LOG] Featured Image Prompt Engineer INPUT', { model: 'models/gemini-2.5-flash', prompt: featuredPromptInput });
       const response = await ai.models.generateContent({
-        model: 'models/gemini-2.0-flash-lite',
+        model: 'models/gemini-2.5-flash',
         contents: featuredPromptInput
       });
       console.log('[AI LOG] Featured Image Prompt Engineer OUTPUT', response.text);
@@ -1916,7 +1915,7 @@ OUTPUT RULE:
         addResearchLog(`SERP Discovery: Searching Google for top competitors for "${keyword}"...`, 'info');
         setScrapingProgress({ processed: 0, total: 0, currentUrl: `Searching Google for "${keyword}"...` });
         try {
-          const serpModels = ['models/gemini-2.0-flash', 'models/gemini-2.5-flash', 'models/gemini-2.0-flash-lite'];
+          const serpModels = ['models/gemini-2.5-flash', 'models/gemini-2.5-flash-lite'];
           let serpResult: any = null;
           for (const model of serpModels) {
             try {
@@ -2236,7 +2235,7 @@ OUTPUT RULE:
       const scrapedSectionRules = rawSections.length > 0
         ? rawSections.map(s =>
             `${s.level.toUpperCase()}: ${s.heading.trim()}\n` +
-            s.paragraphs.slice(0, 3).map((p, i) => `  KEY POINT ${i + 1}: ${p.substring(0, 200)}`).join('\n')
+            s.paragraphs.slice(0, 5).map((p, i) => `  KEY POINT ${i + 1}: ${p.substring(0, 400)}`).join('\n')
           ).join('\n\n')
         : null;
 
@@ -2256,7 +2255,7 @@ AI INTELLIGENCE REPORT:
 - LSI Keywords (Semantic Terms): ${c.lsiKeywords?.join(', ') || 'None identified'}
 ` : ''}
 FULL PAGE CONTENT:
-${c.fullContent?.substring(0, 10000) || 'No content fetched'}
+${c.fullContent?.substring(0, 25000) || 'No content fetched'}
 --- END COMPETITOR URL ---
       `).join('\n\n');
 
@@ -5599,7 +5598,7 @@ ${blogDraft.rawConclusion || blogDraft.conclusion || ''}`;
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                    {[
                                     { id: 'models/gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Default — best balance of speed and quality' },
-                                    { id: 'models/gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', desc: 'Ultra-fast, lowest cost option' },
+                                    { id: 'models/gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', desc: 'Ultra-fast, lowest cost option' },
                                   ].map((model) => (
                                   <button
                                     key={model.id}
@@ -6648,7 +6647,7 @@ function SopInput({
                 <option value="inherit">Inherit Global Model</option>
                 <optgroup label="Google Gemini">
                   <option value="models/gemini-2.5-flash">Gemini 2.5 Flash</option>
-                  <option value="models/gemini-2.0-flash-lite">Gemini 2.0 Flash Lite</option>
+                  <option value="models/gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
                 </optgroup>
                 <optgroup label="OpenAI">
                   <option value="gpt-4o-mini">GPT-4o Mini</option>
