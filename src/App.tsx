@@ -2235,7 +2235,11 @@ OUTPUT RULE:
       const scrapedSectionRules = rawSections.length > 0
         ? rawSections.map(s =>
             `${s.level.toUpperCase()}: ${s.heading.trim()}\n` +
-            s.paragraphs.slice(0, 5).map((p, i) => `  KEY POINT ${i + 1}: ${p.substring(0, 400)}`).join('\n')
+            s.paragraphs.slice(0, 5).map((p, i) => {
+              // Extract only the first sentence as a topic signal — never pass raw competitor text
+              const firstSentence = p.match(/^[^.!?]+[.!?]/)?.[0]?.trim() || p.substring(0, 100).trim();
+              return `  TOPIC ${i + 1}: ${firstSentence}`;
+            }).join('\n')
           ).join('\n\n')
         : null;
 
@@ -2247,15 +2251,13 @@ OUTPUT RULE:
 TITLE: ${c.title}
 WORD COUNT: ${c.wordCount}
 ${c.analysis ? `
-AI INTELLIGENCE REPORT:
+AI INTELLIGENCE REPORT (use for strategic understanding only — do NOT reproduce this content):
 - Intent: ${c.analysis.intentType}
 - Strengths: ${c.analysis.strengths.join(', ')}
 - Gaps identified: ${c.analysis.weaknesses.join(', ')}
 - Key Keywords: ${c.analysis.keyEntities.join(', ')}
 - LSI Keywords (Semantic Terms): ${c.lsiKeywords?.join(', ') || 'None identified'}
 ` : ''}
-FULL PAGE CONTENT:
-${c.fullContent?.substring(0, 25000) || 'No content fetched'}
 --- END COMPETITOR URL ---
       `).join('\n\n');
 
@@ -2266,9 +2268,9 @@ ${c.fullContent?.substring(0, 25000) || 'No content fetched'}
         TARGET: ${settings.targetWordCount} words of factual, high-authority content.
         
         Writing Strategy:
-        - REFERENCE: Use the provided Competitor Data as the primary source of truth for factual information and topical depth.
-        - STRUCTURE: Identify and REPLICATE the most successful heading structures (H2s and H3s) found across the top-ranking competitors.
-        - AUTHORITY: Adopt a professional, authoritative tone that fills critical gaps identified in the competitor analysis.
+        - REFERENCE: Study competitor data to understand WHAT topics are covered and where gaps exist — then write ALL content 100% originally. Do NOT copy, reuse, or closely paraphrase any competitor text, even a single sentence.
+        - STRUCTURE: Use the most effective heading structures found in the top competitors as a framework for your own original content.
+        - AUTHORITY: Write in a professional, authoritative voice that expands on competitor topics with greater depth, clarity, and original insight.
         - STRICT EXECUTION: You must follow the writing directives in your system instructions EXACTLY for each section. Do NOT mention or repeat these directives in your output.
         
         COMPETITOR ANALYSIS (REFERENCE DATA):
@@ -2392,16 +2394,16 @@ ${c.fullContent?.substring(0, 25000) || 'No content fetched'}
 
       const strategyPrompt = `
         ${sharedContext}
-        TASK: Create a "Master Content Blueprint" to rewrite the source article under its exact headings.
+        TASK: Create a "Master Content Blueprint" for writing a 100% original, authoritative article on "${focusKeyword}".
         FOCUS KEYWORD: ${focusKeyword}
         LSI KEYWORDS: ${lsiTerms}
-        ${scrapedHeadingList ? `\n        EXACT HEADINGS FROM SOURCE ARTICLE (these are locked — the content will be rewritten under each of these headings exactly):\n        ${scrapedHeadingList}` : ''}
+        ${scrapedHeadingList ? `\n        HEADING STRUCTURE (use these as the article framework — content must be written fully originally under each heading):\n        ${scrapedHeadingList}` : ''}
 
-        OBJECTIVE: Define the strategic angle and LSI plan for rewriting deeply authoritative content under the source article's exact headings above.
+        OBJECTIVE: Define a strategic angle and LSI plan for creating deeply original, authoritative content that outperforms competitors — using the heading structure above but with entirely fresh insights and writing.
 
         Identify:
-        1. A strategic angle that fills gaps in the source article while keeping the same heading structure.
-        2. A plan to cross-reference source facts while expanding depth under each heading.
+        1. A unique strategic angle that positions this article as more authoritative and useful than competitors.
+        2. What additional depth, examples, or insights can be added under each heading beyond what competitors cover.
         3. Which LSI keywords to weave into each section.
 
         RETURN JSON: { "strategic_angle": "...", "outline": ${scrapedHeadingList ? JSON.stringify(scrapedHeadings) : '["H2: ...", "H3: ..."]'}, "lsi_plan": "..." }
@@ -2499,7 +2501,10 @@ OUTPUT: Return ONLY JSON. No preamble.`
 
       // Step 4: Core Content & LSI Optimization
       setGenerationProgress({ step: 4, total: 6.5, label: 'Step 4: Executing Multi-Section Content Architecture' });
-      const contentSystemPrompt = `You are an Expert SEO Content Generator. You MUST follow both directives below EXACTLY — they override any default behavior.
+      const contentSystemPrompt = `You are an Expert SEO Content Generator. You MUST follow all directives below EXACTLY — they override any default behavior.
+
+ORIGINALITY DIRECTIVE (highest priority — applies to every word you write):
+You are writing a 100% original article. Competitor data is provided only so you understand what topics exist — you MUST NOT reproduce, paraphrase, or closely reword any competitor text. Every sentence must be written from scratch in your own authoritative voice. Imagine you are an expert who has read many sources and is now writing a definitive guide independently.
 
 MANDATORY CONTENT WRITING DIRECTIVE (governs HOW you write every paragraph):
 ${processSOP(settings.prompts.content) || 'Write comprehensive, authoritative, factual paragraphs that fill content gaps found in competitor pages.'}
@@ -2521,7 +2526,7 @@ OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>,
         MANDATORY HEADING STRUCTURE — these are the EXACT headings scraped from the source article. You MUST use every heading below word-for-word, in this exact order, at the exact level shown. No rewording, no reordering, no additions, no omissions:
         ${scrapedHeadingList || strategyData?.outline?.join('\n        ') || 'Follow competitor heading patterns'}
 
-        ${scrapedSectionRules ? `MANDATORY CONTENT COVERAGE — for each section below, you MUST cover the key points listed. These are the exact talking points from the source article and are non-negotiable. Write them originally in your own words but ensure every point is addressed:
+        ${scrapedSectionRules ? `SECTION REFERENCE TOPICS — These are the themes covered by top-ranking competitors under each heading. Use them as inspiration for what to address, but you MUST write 100% original content. Do NOT copy, reproduce, or closely paraphrase any of these topics — write everything in your own authoritative voice with fresh insight:
         ${scrapedSectionRules}` : ''}
 
         MANDATORY CONSTRAINTS:
