@@ -801,15 +801,22 @@ export default function App() {
       setEditableTitle('');
       return;
     }
-    const primary = currentResearch.find(c => c.headings && c.headings.length > 0) || currentResearch[0];
+    // Only use headings from manually entered competitor URLs — SERP reference URLs must not drive heading structure
+    const primary = currentResearch.find(c => c.source !== 'serp' && c.headings && c.headings.length > 0)
+      || currentResearch.find(c => c.source !== 'serp')
+      || currentResearch[0];
     const junkPattern = /^(share|like what|follow|subscribe|in this blog|newsletter|cookie|privacy|menu|nav|sidebar|related|tags|categories|comments|leave a reply|about the author|recent posts|popular posts|advertisement|sign up|log in|get in touch|contact|back to top|table of contents)/i;
+    const conclusionFaqPattern = /^(conclusion|frequently asked questions|faq|faqs|common questions|questions and answers|q&a|q\s*&\s*a)/i;
     const filtered = (primary?.headings || []).filter(h =>
       h.level !== 'h1' &&
       h.text?.trim() &&
       h.text.trim().length >= 10 &&
       !junkPattern.test(h.text.trim())
     );
-    setEditableHeadings(filtered);
+    // Truncate after the last Conclusion/FAQ heading — nothing after them belongs in the article
+    const lastCfIdx = filtered.reduce((acc: number, h: any, i: number) => conclusionFaqPattern.test(h.text.trim()) ? i : acc, -1);
+    const truncated = lastCfIdx >= 0 ? filtered.slice(0, lastCfIdx + 1) : filtered;
+    setEditableHeadings(truncated);
     setEditableTitle(primary?.title?.replace(/[-|].*$/, '').trim() || '');
   }, [currentResearch]);
 
@@ -1875,15 +1882,7 @@ OUTPUT RULE:
   };
 
   const handleSerpAnalysis = async (targetUrls: string[]) => {
-    setIsScraping(true);
-    setShowResearchReport(false);
-    setCurrentResearch([]);
     const apiKey = settings.geminiKey || (process.env.GEMINI_API_KEY as string);
-    if (!apiKey) {
-      showNotification("Authentication Failure: Gemini Engine Offline", 'error');
-      setIsScraping(false);
-      return;
-    }
 
     const normalizeUrl = (u: string) => {
       try {
@@ -1900,12 +1899,20 @@ OUTPUT RULE:
 
     const keyword = focusKeyword_state.trim();
 
-    // Require either a keyword or at least one manual URL
-    if (manualUrls.length === 0 && !keyword) {
-      showNotification("Please provide a competitor URL or a focus keyword.", 'error');
-      setIsScraping(false);
+    // Validate before touching any state — prevents accidental reset on failed launch
+    if (!apiKey) {
+      showNotification("Authentication Failure: Gemini Engine Offline", 'error');
       return;
     }
+    if (manualUrls.length === 0 && !keyword) {
+      showNotification("Please provide a competitor URL or a focus keyword.", 'error');
+      return;
+    }
+
+    // Only reset state after all validation passes
+    setIsScraping(true);
+    setShowResearchReport(false);
+    setCurrentResearch([]);
 
     const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
     try {
@@ -2003,18 +2010,32 @@ OUTPUT RULE:
               if (data.error) {
                 addResearchLog(`Node ${url} skipped: ${data.error}`, 'warning');
               } else {
+                // Truncate headings/sections at the FAQ or Conclusion boundary — nothing after those should appear anywhere
+                const cfPattern = /^(conclusion|frequently asked questions|faq|faqs|common questions|questions and answers|q&a|q\s*&\s*a)/i;
+                const trimAtCF = (arr: any[]): any[] => {
+                  const lastIdx = arr.reduce((acc: number, item: any, i: number) => {
+                    const text = item.text?.trim() || item.heading?.trim() || '';
+                    return cfPattern.test(text) ? i : acc;
+                  }, -1);
+                  return lastIdx >= 0 ? arr.slice(0, lastIdx + 1) : arr;
+                };
+                const cleanHeadings = trimAtCF(data.headings || []);
+                const cleanSections = trimAtCF(data.sections || []);
+                const isSerpUrl = serpUrls.includes(url);
+
                 // If server returned only headings, show them immediately and skip heavier processing
                 if (Array.isArray(data.headings) && data.headings.length > 0 && !data.fullContent) {
                   const minimal = {
                     url: data.url || url,
-                    title: data.title || (data.headings[0]?.text || url),
+                    title: data.title || (cleanHeadings[0]?.text || url),
                     wordCount: data.wordCount || 0,
                     imageCount: data.imageCount || 0,
                     description: data.description || '',
                     fullContent: data.fullContent || '',
                     images: data.images || [],
-                    headings: data.headings || [],
-                    sections: data.sections || []
+                    source: (isSerpUrl ? 'serp' : 'manual') as 'manual' | 'serp',
+                    headings: isSerpUrl ? [] : cleanHeadings,
+                    sections: isSerpUrl ? [] : cleanSections
                   };
                   addResearchLog(`${sourceLabel} Node ingested: ${minimal.title} (headings: ${minimal.headings.length})`, 'success');
                   // Update UI immediately without analysis or Firestore saves
@@ -2031,8 +2052,9 @@ OUTPUT RULE:
                   description: data.description || '',
                   fullContent: data.fullContent || '',
                   images: data.images || [],
-                  headings: data.headings || [],
-                  sections: data.sections || [],
+                  source: (isSerpUrl ? 'serp' : 'manual') as 'manual' | 'serp',
+                  headings: isSerpUrl ? [] : cleanHeadings,
+                  sections: isSerpUrl ? [] : cleanSections,
                   lsiKeywords: data.lsiKeywords || []
                 };
 
@@ -2208,30 +2230,40 @@ OUTPUT RULE:
       const focusKeyword = focusKeyword_state || (!isPlaceholder ? settingsKeyword : '') || dataToUse[0]?.query || titleDerived || 'Target Topic';
       console.log('[GENERATE] Focus keyword resolved:', focusKeyword, '| from state:', focusKeyword_state, '| from settings:', settingsKeyword, '| from title:', titleDerived);
 
-      // Extract exact headings — use user-edited list if available, otherwise scrape from research
-      const primaryCompetitor = dataToUse.find(c => c.headings && c.headings.length > 0) || dataToUse[0];
+      // Extract exact headings — use user-edited list if available, otherwise scrape from research.
+      // Headings come ONLY from manually entered competitor URLs, never from SERP reference URLs.
+      const primaryCompetitor = dataToUse.find(c => c.source !== 'serp' && c.headings && c.headings.length > 0)
+        || dataToUse.find(c => c.headings && c.headings.length > 0)
+        || dataToUse[0];
       const junkHeadingPattern = /^(share|like what|follow|subscribe|in this blog|newsletter|cookie|privacy|menu|nav|sidebar|related|tags|categories|comments|leave a reply|about the author|recent posts|popular posts|advertisement|sign up|log in|get in touch|contact|back to top|table of contents)/i;
+      const conclusionFaqHeadingPattern = /^(conclusion|frequently asked questions|faq|faqs|common questions|questions and answers|q&a|q\s*&\s*a)/i;
+      const truncateAtConclusionFaq = (headings: any[]): any[] => {
+        const lastIdx = headings.reduce((acc: number, h: any, i: number) => conclusionFaqHeadingPattern.test(h.text?.trim() || '') ? i : acc, -1);
+        return lastIdx >= 0 ? headings.slice(0, lastIdx + 1) : headings;
+      };
       const scrapedHeadings = editableHeadings !== null
-        ? editableHeadings.map(h => `${h.level.toUpperCase()}: ${h.text.trim()}`)
-        : (primaryCompetitor?.headings || [])
-            .filter(h =>
+        ? editableHeadings.map((h: any) => `${h.level.toUpperCase()}: ${h.text.trim()}`)
+        : truncateAtConclusionFaq(
+            (primaryCompetitor?.headings || []).filter((h: any) =>
               h.level !== 'h1' &&
               h.text?.trim() &&
               h.text.trim().length >= 10 &&
               !junkHeadingPattern.test(h.text.trim())
             )
-            .map(h => `${h.level.toUpperCase()}: ${h.text.trim()}`);
+          ).map((h: any) => `${h.level.toUpperCase()}: ${h.text.trim()}`);
       const scrapedHeadingList = scrapedHeadings.length > 0
         ? scrapedHeadings.join('\n        ')
         : null;
 
       // Build structured section content rules from scraped sections
-      const rawSections = (primaryCompetitor?.sections || []).filter(s =>
+      const allSections = (primaryCompetitor?.sections || []).filter((s: any) =>
         s.level !== 'h1' &&
         s.heading?.trim().length >= 10 &&
         !junkHeadingPattern.test(s.heading.trim()) &&
         s.paragraphs.length > 0
       );
+      const lastCfSectionIdx = allSections.reduce((acc: number, s: any, i: number) => conclusionFaqHeadingPattern.test(s.heading.trim()) ? i : acc, -1);
+      const rawSections = lastCfSectionIdx >= 0 ? allSections.slice(0, lastCfSectionIdx + 1) : allSections;
       const scrapedSectionRules = rawSections.length > 0
         ? rawSections.map(s =>
             `${s.level.toUpperCase()}: ${s.heading.trim()}\n` +
