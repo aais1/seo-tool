@@ -2558,9 +2558,6 @@ OUTPUT RULES: Generate article body HTML only — NO <!DOCTYPE>, <html>, <head>,
         MANDATORY HEADING STRUCTURE — these are the EXACT headings scraped from the source article. You MUST use every heading below word-for-word, in this exact order, at the exact level shown. No rewording, no reordering, no additions, no omissions:
         ${scrapedHeadingList || strategyData?.outline?.join('\n        ') || 'Follow competitor heading patterns'}
 
-        ${scrapedSectionRules ? `SECTION REFERENCE TOPICS — These are the themes covered by top-ranking competitors under each heading. Use them as inspiration for what to address, but you MUST write 100% original content. Do NOT copy, reproduce, or closely paraphrase any of these topics — write everything in your own authoritative voice with fresh insight:
-        ${scrapedSectionRules}` : ''}
-
         MANDATORY CONSTRAINTS:
         - Apply the system instruction writing directives to every section — this is non-negotiable.
         - Begin output with the first H2 tag. No preamble, no repeated introduction.
